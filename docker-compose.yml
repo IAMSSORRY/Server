@@ -1,0 +1,22 @@
+services:
+  api:
+    build: .
+    container_name: ssorry-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # 소스를 마운트해서 --reload 로 즉시 반영
+      - ./app:/workspace/app
+    environment:
+      ROS_DOMAIN_ID: "0"
+      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+    networks:
+      - rosnet
+
+networks:
+  # 외부 공유 네트워크. 다른 ROS2 컨테이너도 여기에 붙이면 DDS 로 서로 찾는다.
+  #   docker network create ssorry-rosnet
+  #   docker run --network ssorry-rosnet --rm -it ros:humble ros2 topic list
+  rosnet:
+    external: true
+    name: ssorry-rosnet
