@@ -1,6 +1,6 @@
 # Ssorry — 판정 결과 / 카메라 실시간 웹 서버
 
-SO-101 로봇팔로 물체를 집어 상/중으로 판정하는 과정을 웹에서 실시간으로 보여주는 FastAPI 서버.
+PIPER 로봇팔로 사과를 집어 품질(상/중/하)을 판정하는 과정을 웹에서 실시간으로 보여주는 FastAPI 서버.
 카메라 영상, 판정 결과, 누적 통계를 웹소켓과 REST 로 내보낸다.
 
 ## 전체 구성
@@ -327,7 +327,7 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 ```json
 // 연결 직후 한 번, 그리고 POST /stats/reset 직후 모든 클라이언트에 한 번 (둘 다 바로 뒤에 mission 메시지가 온다)
 {"type": "snapshot",
- "stats": {"상": 3, "중": 2, "total": 5},
+ "stats": {"상": 3, "중": 2, "하": 0, "total": 5},
  "cycle_time": 4.2,
  "recent": [{"id": 5, "grade": "중", "confidence": 0.81, "v_value": 0.41, "threshold": 0.5,
              "ts": 1791527982.74, "roll_detected": null}]}
@@ -337,7 +337,7 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
  "bbox": [412, 188, 96, 96], "cam": "top", "ts": 1791527986.84}
 
 // 판정 직후 갱신된 누적 통계
-{"type": "stats", "stats": {"상": 4, "중": 2, "total": 6}, "cycle_time": 4.1}
+{"type": "stats", "stats": {"상": 4, "중": 2, "하": 0, "total": 6}, "cycle_time": 4.1}
 
 // 모션 이벤트
 {"type": "motion", "approach_speed": 0.8, "place_height": 0.12, "roll_detected": false, "ts": 1791527988.34}
@@ -347,7 +347,7 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 
 ```json
 // GET /stats?limit=50
-{"stats": {"상": 4, "중": 2, "total": 6}, "cycle_time": 4.1,
+{"stats": {"상": 4, "중": 2, "하": 0, "total": 6}, "cycle_time": 4.1,
  "recent": [{"id": 6, "grade": "상", "confidence": 0.87, "v_value": 0.62, "threshold": 0.5,
              "ts": 1791527986.84, "roll_detected": false}]}
 
@@ -356,11 +356,11 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
   "ts": 1791527966.54, "roll_detected": true}]
 
 // POST /stats/reset
-{"stats": {"상": 0, "중": 0, "total": 0}}
+{"stats": {"상": 0, "중": 0, "하": 0, "total": 0}}
 
 // GET /runs  (현재 회차는 ended_at 이 null)
-[{"id": 2, "started_at": 1791540643.52, "ended_at": null, "stats": {"상": 6, "중": 2, "total": 8}},
- {"id": 1, "started_at": 1791540620.35, "ended_at": 1791540643.52, "stats": {"상": 2, "중": 3, "total": 5}}]
+[{"id": 2, "started_at": 1791540643.52, "ended_at": null, "stats": {"상": 6, "중": 2, "하": 0, "total": 8}},
+ {"id": 1, "started_at": 1791540620.35, "ended_at": 1791540643.52, "stats": {"상": 2, "중": 3, "하": 0, "total": 5}}]
 
 // GET /export.csv?run=1  (첫 줄 앞에 UTF-8 BOM)
 run_id,id,time,grade,confidence,v_value,threshold,roll_detected,cam
@@ -372,6 +372,10 @@ run_id,id,time,grade,confidence,v_value,threshold,roll_detected,cam
 {"default": "top", "cameras": [{"name": "top", "live": true, "last_frame_age": 0.04},
                                {"name": "wrist", "live": false, "last_frame_age": null}]}
 ```
+
+**등급**: `grade` 는 `"상"`, `"중"`, `"하"` 중 하나다. 그 밖의 값은 `/ingest/judge` 가 422 로 거부한다.
+통계(`stats`)는 항상 세 등급 키와 `total` 을 가진다(아직 없는 등급도 0). 로봇 쪽(Piper)은 지금 상 / 중 두 등급만 낸다.
+MOCK 은 빨강 비율 0.3 미만을 하로 낸다(화면 개발용 기준).
 
 **값의 범위** (실제 장비 = IAMSSORRY/Piper 기준, MOCK 도 같다)
 - `v_value`: 빨강 비율 0~1 (소수 셋째 자리), `threshold`: 그 임계값 (`red_ratio_min`, 현재 0.5)

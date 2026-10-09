@@ -196,6 +196,7 @@ class Store:
             SELECT r.id, r.started_at, r.ended_at,
                    COALESCE(SUM(j.grade = '상'), 0) AS high,
                    COALESCE(SUM(j.grade = '중'), 0) AS mid,
+                   COALESCE(SUM(j.grade = '하'), 0) AS low,
                    COUNT(j.id) AS total
             FROM runs r LEFT JOIN judges j ON j.run_id = r.id
             GROUP BY r.id ORDER BY r.id DESC
@@ -203,7 +204,7 @@ class Store:
         ).fetchall()
         return [
             {"id": r["id"], "started_at": r["started_at"], "ended_at": r["ended_at"],
-             "stats": {"상": r["high"], "중": r["mid"], "total": r["total"]}}
+             "stats": {"상": r["high"], "중": r["mid"], "하": r["low"], "total": r["total"]}}
             for r in rows
         ]
 

@@ -23,8 +23,16 @@ MOTION_DELAY = 1.5  # 판정 후 모션 이벤트까지
 # 실제 장비(IAMSSORRY/Piper config.yaml grade)와 같은 기준: v_value = 빨강 비율 0~1
 THRESHOLD = 0.5     # red_ratio_min
 DARK_MAX = 0.1      # dark_ratio_max (흠 비율 상한, 이보다 크면 중)
+LOW_MAX = 0.3       # 빨강 비율이 이보다 낮으면 하 (MOCK 전용 기준 — 실제 기준은 로봇 쪽이 정한다)
 APPLE_COUNT = 10    # 미션 한 번에 사과 수
 BACKGROUNDS = [(40, 44, 52), (30, 50, 40), (50, 36, 36)]
+
+
+def _grade(v_value: float, dark: float) -> str:
+    """상 = 빨강 비율 >= 임계값이고 흠 비율 <= 상한. 하 = 빨강 비율이 LOW_MAX 미만. 나머지 = 중."""
+    if v_value >= THRESHOLD and dark <= DARK_MAX:
+        return "상"
+    return "하" if v_value < LOW_MAX else "중"
 
 
 def _circles(seed: int) -> list[tuple]:
@@ -106,7 +114,7 @@ async def run(cameras: CameraHubs, judges: JudgeHub, stall: bool = False, resume
         # 로봇 쪽 dashboard.confidence_of 와 같은 식: 임계값에서 떨어진 정도 0.5~1.0
         span = max(THRESHOLD, 1 - THRESHOLD)
         judges.add_judge({
-            "grade": "상" if v_value >= THRESHOLD and dark <= DARK_MAX else "중",
+            "grade": _grade(v_value, dark),
             "confidence": round(min(1.0, 0.5 + abs(v_value - THRESHOLD) / (2 * span)), 3),
             "v_value": v_value,
             "threshold": THRESHOLD,

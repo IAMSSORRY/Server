@@ -19,7 +19,8 @@ from app.mission import MissionState, stall_reason
 
 log = logging.getLogger(__name__)
 
-GRADES = ("상", "중")
+# 품질 등급. 통계(stats)는 항상 이 순서의 키 + "total" 을 가진다 (아직 0 인 등급도 0 으로 나간다).
+GRADES = ("상", "중", "하")
 HISTORY_MAX = 10_000
 # 구독자 큐가 이만큼 밀리면 끊긴 클라이언트로 보고 연결을 닫는다. 이벤트를 버리지는 않는다.
 QUEUE_MAX = 1_000
