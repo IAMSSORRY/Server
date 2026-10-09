@@ -16,7 +16,7 @@ import time
 EVENTS = {
     "start": ("apple_count", "sim"),                     # 미션 시작
     "apple": ("index", "total"),                         # n 번째 사과 시작 (1부터)
-    "phase": ("phase",),                                 # pick / inspect / place / home
+    "phase": ("phase",),                                 # pick / inspect / place / home / nudge / estop_return / estop_rest
     "pick": ("ok", "attempt", "width_mm"),               # 파지 결과 (attempt 0 = 첫 시도)
     "skip": ("index", "reason"),                         # 그 사과 건너뜀 (도달 불가 등)
     "adaptive": ("scale", "release_h", "frozen", "down_streak"),  # 적응형 조정 상태
