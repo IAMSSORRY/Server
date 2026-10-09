@@ -6,11 +6,13 @@
 
   GET  /control/status            {state, error, index, placed, results}
   POST /control/start  {"apples"} 미션 시작 (숫자 / "all" / 생략)
-  POST /control/estop             비상정지
+  POST /control/estop             비상정지: 즉시 그 자리 정지 → 모터 정지 (~0.2초). 팔을 낮추지 않는다
+  POST /control/park              정리 후 정지: 그 자리 정지 → 쥔 사과를 집은 자리에 되돌림 → 팔을 낮게 → 모터 정지 (수 초)
   POST /control/resume            비상정지(또는 오류 정지) 해제 → 멈춘 사과부터 이어서
   POST /control/stop              지금 사과까지만 하고 멈춤
 
-state: idle / running / estopped / error / done. 로봇 프로그램이 안 떠 있으면 503.
+state: idle / running / stopping(/park 정리 중) / estopped / error / done. 로봇 프로그램이 안 떠 있으면 503.
+요청마다 새 클라이언트를 쓰므로 /control/estop 은 다른 명령(예: 정리 중인 /park)이 처리 중이어도 바로 나간다.
 """
 
 import httpx
@@ -21,7 +23,8 @@ from app import config
 router = APIRouter(prefix="/control", tags=["control"])
 
 # 비상정지는 빨리 가야 하고, 해제는 로봇이 모터를 다시 켜느라 몇 초 걸린다.
-_TIMEOUT = {"estop": 3.0, "resume": 15.0}
+# park 는 사과 되돌림·팔 내림이 끝난 뒤에 응답하므로 넉넉히 둔다.
+_TIMEOUT = {"estop": 3.0, "resume": 15.0, "park": 20.0}
 
 
 async def _call(method: str, path: str, body: dict | None = None) -> dict:
@@ -58,6 +61,11 @@ async def start(body: dict = Body(default={})):
 @router.post("/estop")
 async def estop():
     return await _call("POST", "/estop")
+
+
+@router.post("/park")
+async def park():
+    return await _call("POST", "/park")
 
 
 @router.post("/resume")

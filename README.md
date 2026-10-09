@@ -179,7 +179,8 @@ docker compose logs -f api
 | `GET /arm` | 로봇팔 상태 (PIPER 에서 3초마다 읽기만 한다). `ok` 가 false 면 `message` 에 이유 |
 | `GET /control/status` | 로봇 미션 프로그램 상태 `{state, error, index, placed, results}` |
 | `POST /control/start` | 미션 시작 `{"apples": 5}` (`"all"` = 트레이가 빌 때까지, 생략 = 로봇 설정) |
-| `POST /control/estop` | 비상정지 (그 자리 정지 → 쥔 사과를 집은 자리에 되돌림 → 팔을 낮게 → 모터 정지) |
+| `POST /control/estop` | 비상정지: **즉시 그 자리 정지 → 모터 정지** (~0.2초). 팔을 낮추지 않는다. 다른 명령 처리 중에도 바로 나간다 |
+| `POST /control/park` | 정리 후 정지: 그 자리 정지 → 쥔 사과를 집은 자리에 되돌림 → 팔을 낮게 → 모터 정지 (수 초, 타임아웃 20초) |
 | `POST /control/resume` | 비상정지·오류 정지 해제 → 멈춘 사과부터 이어서 |
 | `POST /control/stop` | 지금 사과까지만 하고 멈춤 |
 | `GET /health` | 서버 상태, 카메라 소스 |
@@ -303,8 +304,11 @@ reset 직후 모든 `/ws/judge` 에 연결 직후와 같은 순서로 snapshot �
 (Piper `mission.py --serve`, 기본 `:8765`)으로 그대로 넘긴다. 로봇 주소는 `ROBOT_CONTROL_URL`
 (기본 `http://host.docker.internal:8765`), 토큰은 `/ingest` 와 같은 `INGEST_TOKEN` 이라 브라우저에는 나가지 않는다.
 
-- `state`: `idle` 대기 / `running` 실행 중 / `stopping` 비상정지 처리 중 / `estopped` 비상정지 / `error` 오류로 그 자리 정지 / `done` 완료
-- 지금 할 수 없는 명령(실행 중에 `start` 등)은 로봇 응답 그대로 `ok: false` 와 `error`(= `message`) 를 준다 (웹 `api.ts` 는 `error` 를 읽는다).
+- `state`: `idle` 대기 / `running` 실행 중 / `stopping` `/park` 정리 중 / `estopped` 비상정지 / `error` 오류로 그 자리 정지 / `done` 완료
+- `/control/estop` 은 즉시 정지라 위급할 때 쓰고, 위급하지 않으면 `/control/park` 로 팔을 낮춘 뒤 멈춘다(높은 곳에서 모터가 멈추면 처질 수 있다).
+  `/park` 정리 중에 `/control/estop` 을 보내면 정리를 버리고 바로 멈춘다(요청마다 새 연결이라 앞 요청을 기다리지 않는다).
+- 타임아웃: `estop` 3초, `park` 20초, `resume` 15초, 나머지 5초.
+- 지금 할 수 없는 명령(실행 중에 `start`, 이미 비상정지인데 `park` 등)은 로봇 응답 그대로 `ok: false` 와 `error`(= `message`) 를 준다 (웹 `api.ts` 는 `error` 를 읽는다).
 - 로봇 미션 프로그램이 안 떠 있으면 `503`, 토큰이 안 맞으면 `502`.
 - ⚠ 비상정지 해제 순간 모터 전원이 잠깐 빠져 팔이 처질 수 있다 — 해제 버튼에는 확인창을 띄운다.
 - 상태가 바뀔 때마다 로봇이 `POST /ingest/mission` 으로 `{"event": "control", "state", "error"}` 도 보낸다.
