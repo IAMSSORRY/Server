@@ -50,6 +50,9 @@ DB_PATH = Path(os.environ.get("DB_PATH", "/data/ssorry.db"))
 # CSV 의 time 열 시간대 (UTC 기준 시). 컨테이너는 UTC 라서 한국 시간으로 맞춘다.
 CSV_UTC_OFFSET_HOURS = float(os.environ.get("CSV_UTC_OFFSET_HOURS", "9"))
 
+# 로봇 미션 프로그램(Piper `mission.py --serve`)의 원격 제어 주소. /control/* 가 여기로 넘긴다.
+ROBOT_CONTROL_URL = os.environ.get("ROBOT_CONTROL_URL", "http://host.docker.internal:8765").rstrip("/")
+
 # /ingest/* 를 보호하는 토큰. 비어 있으면 검사하지 않는다(LAN 신뢰).
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 
