@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app import config, ingest
+from app import config, control, ingest
 from app.judge import HISTORY_MAX, SubscriberOverflow
 from app.sessions import COOKIE_NAME, Session
 from app.db import Store, _number
@@ -88,6 +88,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Ssorry Web API", lifespan=lifespan)
 app.include_router(ingest.router)
+app.include_router(control.router)
 
 
 @app.middleware("http")

@@ -22,6 +22,7 @@ services:
       CAMERAS: ${CAMERAS:-top,wrist}
       CAMERA_SOURCE: ${CAMERA_SOURCE:-ingest}
       PIPER_URL: ${PIPER_URL:-http://host.docker.internal}
+      ROBOT_CONTROL_URL: ${ROBOT_CONTROL_URL:-http://host.docker.internal:8765}
       PIPER_CAMERAS: ${PIPER_CAMERAS:-}
       PIPER_AUTO_CONNECT: ${PIPER_AUTO_CONNECT:-1}
       ARM_MONITOR: ${ARM_MONITOR:-}
