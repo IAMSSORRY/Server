@@ -230,7 +230,7 @@ docker compose logs -f api
 |---|---|---|
 | `start` | `apple_count`, `sim` | 미션 시작 (상태 초기화) |
 | `apple` | `index`, `total` | n 번째 사과 시작 (1부터) |
-| `phase` | `phase` | 지금 동작: `pick` / `inspect` / `place` / `home` |
+| `phase` | `phase` | 지금 동작: `pick` / `inspect` / `place` / `home` / `nudge`(벽에 붙은 사과 굴리기) / `estop_return`(비상정지 때 쥔 사과 되돌리기) / `estop_rest`(비상정지 때 팔 내리기) |
 | `pick` | `ok`, `attempt`, `width_mm` | 파지 결과 (`attempt` 0 = 첫 시도) |
 | `skip` | `index`, `reason` | 그 사과 건너뜀 (파지 실패, 도달 불가 등) |
 | `adaptive` | `scale`, `release_h`, `frozen`, `down_streak` | 굴림 적응 조정 상태. `frozen` 이면 자동 조정 중단 |
@@ -239,6 +239,17 @@ docker compose logs -f api
 | `stalled` | `idle_s`, `reason` | **서버가 만든다.** 진행 중인데 로봇 소식이 끊김 (아래) |
 
 알 수 없는 event 도 받아서 저장 / 전달한다(상태는 안 바뀐다). `event` 가 없으면 422.
+로봇이 상태 표에 없는 이벤트도 보낸다 (저장 / 전달만):
+
+| event | 필드 | 뜻 |
+|---|---|---|
+| `box` | `info`, `상`, `중`, `하` | 미션 시작 때 사진으로 찾은 상자 칸 위치 [x, y] m 와 기준 대비 이동·회전 |
+| `drop` | `where`, `width_mm` | 운반 중 사과를 놓침 (경고로 보일 것) |
+| `drop_measure` | `index`, `drop_mm`, `dropped` | 놓을 때 낙하 거리. `dropped` 가 true 면 경고 |
+| `control` | `state`, `error` | 원격 제어 상태 변화 (`/control/status` 의 state) |
+| `resume` | `index` | 비상정지 해제 후 이어서 시작. 바로 뒤에 `apple` 이 와서 상태가 진행 중으로 돌아간다 |
+
+어떤 이유로 멈췄든(원격 비상정지, 힘 이상 자동 정지, 오류, PIPER Studio 비상정지) 로봇은 `estop` 을 보낸다.
 
 ```json
 // /ws/judge 연결 직후 snapshot 다음에 한 번 (event 는 null), 그 뒤로 이벤트마다
@@ -293,7 +304,7 @@ reset 직후 모든 `/ws/judge` 에 연결 직후와 같은 순서로 snapshot �
 (기본 `http://host.docker.internal:8765`), 토큰은 `/ingest` 와 같은 `INGEST_TOKEN` 이라 브라우저에는 나가지 않는다.
 
 - `state`: `idle` 대기 / `running` 실행 중 / `stopping` 비상정지 처리 중 / `estopped` 비상정지 / `error` 오류로 그 자리 정지 / `done` 완료
-- 지금 할 수 없는 명령(실행 중에 `start` 등)은 로봇 응답 그대로 `ok: false` 와 `message` 를 준다.
+- 지금 할 수 없는 명령(실행 중에 `start` 등)은 로봇 응답 그대로 `ok: false` 와 `error`(= `message`) 를 준다 (웹 `api.ts` 는 `error` 를 읽는다).
 - 로봇 미션 프로그램이 안 떠 있으면 `503`, 토큰이 안 맞으면 `502`.
 - ⚠ 비상정지 해제 순간 모터 전원이 잠깐 빠져 팔이 처질 수 있다 — 해제 버튼에는 확인창을 띄운다.
 - 상태가 바뀔 때마다 로봇이 `POST /ingest/mission` 으로 `{"event": "control", "state", "error"}` 도 보낸다.
