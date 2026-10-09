@@ -79,9 +79,14 @@ PIPER Studio 와 같은 PC 에 띄운다. 프론트는 시연 노트북에서 �
 - 판정 기록은 `./data/ssorry.db` 에 남는다(아래 [데이터 보관](#데이터-보관)). CI/CD 배포의 `git reset --hard` 도 `data/` 는 건드리지 않는다.
 - PIPER 카메라는 라벨로 찾고, 재연결할 때마다 `/api/cameras/current` 에서 현재 id 를 다시 찾는다
   (`/dev/videoN` 은 재부팅이나 USB 재연결로 바뀔 수 있다).
-  PIPER 는 USB 가 빠졌다 다시 꽂힌 카메라를 스스로 다시 열지 않으므로, 꽂혀 있는데(`present`) 끊긴(`connected: false`)
-  카메라는 서버가 `POST /api/cameras/connect` 로 다시 연다(PIPER 화면의 [연결] 버튼과 같다, 10초에 한 번까지).
-  끄려면 `PIPER_AUTO_CONNECT=0`. 스트림이 5초 넘게 조용하면 끊고 카메라 상태부터 다시 본다.
+  **USB 를 뽑았다 다시 꽂아도 자동으로 돌아온다.** PIPER 는 스스로 복구하지 않으므로 사람이 화면에서 하던 일을 서버가 한다
+  (끄려면 `PIPER_AUTO_CONNECT=0`):
+  1. 카메라가 끊긴 게 보이면 PIPER [스캔](`GET /api/cameras/scan`)을 돌린다 — PIPER 는 스캔해야 다시 꽂힌 걸 안다 (5초에 한 번까지)
+  2. 같은 장치 번호로 돌아왔으면 [연결](`POST /api/cameras/connect`) (10초에 한 번까지)
+  3. 번호가 바뀌어 돌아왔으면(`/dev/video4` → `/dev/video6`) 같은 USB 포트의 새 장치로 라벨을 옮긴다
+     (옛 등록 해제 → 새 장치를 같은 라벨로 등록). 다른 포트에 꽂았으면 같은 이름의 카메라가 하나뿐일 때만 옮긴다.
+  - 스트림이 5초 넘게 조용하면 끊고 카메라 상태부터 다시 본다.
+  - 카메라가 뽑혀 있는 동안은 5초마다 스캔한다. PIPER 에서 녹화 / 추론이 카메라를 쥐고 있으면 스캔은 캐시만 돌려준다.
   라벨은 실제로 쓸 카메라에 붙였는지 확인한다(다른 USB 카메라에 붙어 있으면 그 화면이 나간다).
 - LeRobot 쪽 `SsorryClient` 에는 `.env` 의 `INGEST_TOKEN` 과 같은 값을 준다. 같은 PC 면 주소는 `http://localhost:8000`.
 
