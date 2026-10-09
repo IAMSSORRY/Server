@@ -58,4 +58,4 @@ async def ingest_camera(ws: WebSocket, cam: str):
         while True:
             hub.publish(await ws.receive_bytes())
     except WebSocketDisconnect:
-        pass
+        hub.set_error("카메라를 보내던 로봇 쪽 연결이 끊겼다")

@@ -14,6 +14,7 @@ from app import config, ingest
 from app.judge import HISTORY_MAX, SubscriberOverflow
 from app.sessions import COOKIE_NAME, Session
 from app.state import cameras, judges, sessions
+from app.stream import LIVE_WINDOW_S
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
 log = logging.getLogger(__name__)
@@ -159,15 +160,49 @@ async def camera_ws(ws: WebSocket, cam: str | None = None):
         "cams": cameras.names,
     })
 
-    seq = 0
+    name = cam or cameras.default
 
-    async def next_frame() -> bytes:
-        nonlocal seq
-        seq, frame = await hub.next_frame(seq)
-        return frame
+    def status(live: bool) -> dict:
+        message = {"type": "camera_status", "cam": name, "live": live}
+        if not live:
+            message.update({
+                "message": "카메라를 불러오지 못했습니다",
+                "reason": hub.error or f"{LIVE_WINDOW_S:.0f}초 넘게 프레임이 들어오지 않았다",
+                "last_frame_age": _round(hub.last_frame_age),
+            })
+        return message
+
+    # 카메라가 죽어 있으면 마지막 프레임(옛날 화면)을 보내지 않고 다운 상태부터 알린다.
+    live = hub.live
+    seq = 0 if live else hub.seq
+    if not live:
+        await _send_json(ws, status(False))
+
+    async def next_item() -> list[str | bytes]:
+        """보낼 것들. 프레임이면 [JPEG], 상태가 바뀌었으면 [상태 JSON] 또는 [상태 JSON, JPEG]."""
+        nonlocal seq, live
+        while True:
+            try:
+                seq, frame = await asyncio.wait_for(hub.next_frame(seq), timeout=LIVE_WINDOW_S)
+            except asyncio.TimeoutError:
+                if live:
+                    live = False
+                    return [json.dumps(status(False), ensure_ascii=False)]
+                continue
+            if not live:
+                live = True
+                return [json.dumps(status(True), ensure_ascii=False), frame]
+            return [frame]
+
+    async def send(items: list[str | bytes]) -> None:
+        for item in items:
+            if isinstance(item, bytes):
+                await ws.send_bytes(item)
+            else:
+                await ws.send_text(item)
 
     try:
-        await _pump(ws, next_frame, ws.send_bytes)
+        await _pump(ws, next_item, send)
     finally:
         session.connections -= 1
 
@@ -222,6 +257,7 @@ async def list_cameras():
                 # 최근 3초 안에 프레임이 왔는가. 한 번 받고 멈춘 카메라는 false 다.
                 "live": cameras.get(n).live,
                 "last_frame_age": _round(cameras.get(n).last_frame_age),
+                "error": None if cameras.get(n).live else cameras.get(n).error,
             }
             for n in cameras.names
         ],

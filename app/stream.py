@@ -18,13 +18,28 @@ class FrameHub:
         self._frame: bytes | None = None
         self._seq = 0
         self._last_at: float | None = None
+        # 소스가 알려준 마지막 실패 이유 (예: "PIPER 에서 연결 안 됨"). 프레임이 오면 지운다.
+        self._error: str | None = None
 
     def publish(self, frame: bytes) -> None:
         self._frame = frame
         self._seq += 1
         self._last_at = time.monotonic()
+        self._error = None
         event, self._event = self._event, asyncio.Event()
         event.set()
+
+    def set_error(self, reason: str) -> None:
+        """소스가 카메라를 못 받아올 때 이유를 남긴다. 클라이언트의 다운 메시지에 실린다."""
+        self._error = reason
+
+    @property
+    def error(self) -> str | None:
+        return self._error
+
+    @property
+    def seq(self) -> int:
+        return self._seq
 
     @property
     def last_frame_age(self) -> float | None:

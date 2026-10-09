@@ -156,6 +156,17 @@ docker compose logs -f api
 - 클라이언트마다 최신 프레임만 보내므로 느린 클라이언트는 중간 프레임을 건너뛴다.
 - 세션은 `ssorry_sid` 쿠키로 구분하며 메모리에만 있다. 쿠키 없이 웹소켓에 붙으면 4401, 없는 카메라는 4404 로 닫힌다.
   연결 없이 1시간 지난 세션은 정리된다.
+- **카메라 다운 / 복구**: 3초 넘게 프레임이 안 오면 연결을 끊지 않고 상태 메시지를 보낸다. 다시 프레임이 오면
+  `live: true` 를 보낸 뒤 같은 연결로 실시간 프레임을 이어서 보낸다. 다운 상태에서 새로 붙으면 마지막(옛날) 프레임은
+  보내지 않고 다운 메시지부터 보낸다. PIPER 소스는 끊기면 최대 3초 간격으로 다시 붙는다.
+
+  ```json
+  {"type": "camera_status", "cam": "top", "live": false, "message": "카메라를 불러오지 못했습니다",
+   "reason": "PIPER 에서 'wrist'(/dev/video4) 가 연결돼 있지 않다 — 카메라 페이지에서 연결하세요", "last_frame_age": 5.1}
+  {"type": "camera_status", "cam": "top", "live": true}
+  ```
+
+  `reason` 은 원인을 아는 경우 그 이유, 모르면 "3초 넘게 프레임이 들어오지 않았다". `last_frame_age` 는 한 번도 안 왔으면 null.
 - 카메라 해상도는 소스가 정한다. PIPER Studio 를 쓰면 그쪽 카메라 설정의 **출력 해상도**가 그대로 나온다.
   ELP 글로벌 셔터(AR0234) 카메라는 저해상도로 열면 센서 가운데만 잘라 화각이 좁아지므로,
   PIPER 에서 캡처 해상도를 넓게(예: 1280x960) 잡고 출력 해상도로 줄이는 것이 좋다.
@@ -230,6 +241,7 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 
 // GET /cameras
 // live: 최근 3초 안에 프레임이 왔는가. last_frame_age: 마지막 프레임 이후 초 (한 번도 안 왔으면 null)
+// error: live 가 false 일 때 소스가 알려준 원인 (없으면 null)
 {"default": "top", "cameras": [{"name": "top", "live": true, "last_frame_age": 0.04},
                                {"name": "wrist", "live": false, "last_frame_age": null}]}
 ```

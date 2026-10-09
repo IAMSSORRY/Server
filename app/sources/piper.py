@@ -19,7 +19,8 @@ from app.stream import FrameHub
 
 log = logging.getLogger(__name__)
 
-RECONNECT_MAX_S = 10.0
+# 카메라가 복구되면 이 시간 안에 다시 붙는다
+RECONNECT_MAX_S = 3.0
 
 
 async def _read_parts(response: httpx.Response):
@@ -48,6 +49,17 @@ async def _read_parts(response: httpx.Response):
                 break
             yield buf[body_start:body_start + length]
             buf = buf[body_start + length:]
+
+
+def _describe(e: Exception) -> str:
+    """화면에 보여줄 실패 이유."""
+    if isinstance(e, httpx.ConnectError):
+        return "PIPER Studio 에 연결할 수 없다 (PIPER 가 꺼져 있거나 주소가 틀렸다)"
+    if isinstance(e, httpx.TimeoutException):
+        return "PIPER Studio 가 응답하지 않는다"
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"PIPER Studio 가 {e.response.status_code} 를 돌려줬다 ({e.request.url.path})"
+    return str(e) or type(e).__name__
 
 
 async def resolve_camera_id(client: httpx.AsyncClient, base_url: str, ref: str) -> str:
@@ -89,9 +101,11 @@ async def pull_camera(name: str, ref: str, hub: FrameHub, base_url: str, fps: fl
                     async for jpeg in _read_parts(response):
                         hub.publish(jpeg)
                 log.warning("PIPER 카메라 스트림 종료: %s", name)
+                hub.set_error("PIPER 카메라 스트림이 끊겼다")
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log.warning("PIPER 카메라 %s 연결 실패 (%s), %.0f초 뒤 재시도", name, e, backoff)
+                hub.set_error(_describe(e))
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, RECONNECT_MAX_S)
