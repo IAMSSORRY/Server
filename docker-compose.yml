@@ -10,21 +10,14 @@ services:
       # 프론트 빌드 결과(index.html 이 있는 폴더). 비어 있으면 내장 카메라 뷰어가 뜬다.
       - ${FRONTEND_DIST:-./frontend-dist}:/workspace/frontend:ro
     environment:
-      ROS_DOMAIN_ID: "0"
-      RMW_IMPLEMENTATION: rmw_fastrtps_cpp
       # 셸 환경변수나 .env 로 덮어쓴다. 예: MOCK=1 docker compose up -d
       MOCK: ${MOCK:-0}
+      CAMERAS: ${CAMERAS:-top,wrist}
+      CAMERA_SOURCE: ${CAMERA_SOURCE:-ingest}
+      PIPER_URL: ${PIPER_URL:-http://host.docker.internal}
+      PIPER_CAMERAS: ${PIPER_CAMERAS:-}
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
-      CAMERA_TOPIC: ${CAMERA_TOPIC:-/camera/image_raw/compressed}
-      JUDGE_TOPIC: ${JUDGE_TOPIC:-/ssorry/judge}
-      MOTION_TOPIC: ${MOTION_TOPIC:-/ssorry/motion}
-    networks:
-      - rosnet
-
-networks:
-  # 외부 공유 네트워크. 다른 ROS2 컨테이너도 여기에 붙이면 DDS 로 서로 찾는다.
-  #   docker network create ssorry-rosnet
-  #   docker run --network ssorry-rosnet --rm -it ros:humble ros2 topic list
-  rosnet:
-    external: true
-    name: ssorry-rosnet
+    extra_hosts:
+      # 리눅스에서도 host.docker.internal 로 호스트(PIPER Studio)에 붙을 수 있게
+      - "host.docker.internal:host-gateway"

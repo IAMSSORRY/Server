@@ -1,64 +1,73 @@
 import asyncio
 import json
-import os
+import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar
 
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from pydantic import BaseModel
 
-from app.judge import HISTORY_MAX, JudgeHub, SubscriberOverflow
-from app.ros_node import CAMERA_TOPIC, BridgeCallbacks, RosBridge
-from app.sessions import COOKIE_NAME, Session, SessionStore
-from app.stream import FrameHub
+from app import config, ingest
+from app.judge import HISTORY_MAX, SubscriberOverflow
+from app.sessions import COOKIE_NAME, Session
+from app.state import cameras, judges, sessions
 
-STATIC_DIR = Path(__file__).parent / "static"
-# 빌드한 프론트(index.html 이 있는 폴더). 있으면 / 에서 서빙하고, 없으면 내장 카메라 뷰어를 띄운다.
-# 프론트를 API 와 같은 출처에서 열어야 세션 쿠키가 웹소켓에 실린다.
-FRONTEND_DIR = Path(os.environ.get("FRONTEND_DIR", "/workspace/frontend"))
-MOCK = os.environ.get("MOCK") == "1"
-# 쉼표로 구분한 허용 출처. 예: http://192.168.0.5:5173,http://localhost:5173
-CORS_ORIGINS = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
+log = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-bridge = RosBridge()
-frames = FrameHub()
-judges = JudgeHub()
-sessions = SessionStore()
+
+def _start_sources() -> list[asyncio.Task]:
+    """카메라 / 이벤트 소스를 백그라운드 태스크로 띄운다."""
+    if config.MOCK:
+        from app.sources import mock  # Pillow 는 MOCK 일 때만 필요하다
+
+        log.info("MOCK 모드: 카메라 %s, 판정 / 모션 이벤트를 만든다", cameras.names)
+        return [asyncio.create_task(mock.run(cameras, judges))]
+
+    if config.CAMERA_SOURCE == "piper":
+        from app.sources import piper
+
+        tasks = []
+        for name in cameras.names:
+            cam_id = config.PIPER_CAMERAS.get(name)
+            if cam_id is None:
+                log.warning("PIPER_CAMERAS 에 %s 가 없어 이 카메라는 비워 둔다", name)
+                continue
+            tasks.append(asyncio.create_task(piper.pull_camera(
+                name, cam_id, cameras.get(name), config.PIPER_URL, config.PIPER_STREAM_FPS,
+            )))
+        return tasks
+
+    log.info("카메라는 WS /ingest/camera/{cam} 으로 들어오기를 기다린다 (CAMERAS=%s)", ",".join(cameras.names))
+    return []
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    loop = asyncio.get_running_loop()
-    frames.bind(loop)
-    judges.bind(loop)
-
-    extra_nodes = []
-    if MOCK:
-        from app.mock import MockPublisher  # Pillow 는 MOCK 일 때만 필요하다
-
-        extra_nodes.append(MockPublisher)
-
-    bridge.start(
-        BridgeCallbacks(on_frame=frames.push, on_judge=judges.push_judge, on_motion=judges.push_motion),
-        extra_node_factories=extra_nodes,
-    )
+    tasks = _start_sources()
     yield
-    bridge.stop()
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
-app = FastAPI(title="Ssorry ROS2 Web API", lifespan=lifespan)
+app = FastAPI(title="Ssorry Web API", lifespan=lifespan)
+app.include_router(ingest.router)
 
 
 @app.middleware("http")
 async def ensure_session(request: Request, call_next):
-    """쿠키에 유효한 세션이 없으면 새로 발급한다. 웹소켓은 이 쿠키로 세션을 찾는다."""
+    """쿠키에 유효한 세션이 없으면 새로 발급한다. 웹소켓은 이 쿠키로 세션을 찾는다.
+
+    /ingest 는 브라우저가 아니라 로봇 쪽 프로세스가 부르므로 세션을 만들지 않는다.
+    """
+    if request.url.path.startswith("/ingest"):
+        return await call_next(request)
     session = sessions.get(request.cookies.get(COOKIE_NAME))
     created = session is None
     if created:
@@ -71,11 +80,11 @@ async def ensure_session(request: Request, call_next):
     return response
 
 
-if CORS_ORIGINS:
+if config.CORS_ORIGINS:
     # 마지막에 추가한 미들웨어가 가장 바깥이다. preflight 가 세션 미들웨어보다 먼저 처리된다.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=CORS_ORIGINS,
+        allow_origins=config.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -132,19 +141,29 @@ async def _send_json(ws: WebSocket, message: dict) -> None:
 
 
 @app.websocket("/ws/camera")
-async def camera_ws(ws: WebSocket):
+async def camera_ws(ws: WebSocket, cam: str | None = None):
+    """?cam=<이름> 으로 카메라를 고른다. 없으면 기본(CAMERAS 의 첫 번째) 카메라."""
     session = await _accept_session(ws)
     if session is None:
         return
+    hub = cameras.get(cam)
+    if hub is None:
+        await ws.close(code=4404, reason=f"unknown camera: {cam}")
+        return
 
     session.connections += 1
-    await ws.send_json({"type": "hello", "session": session.id, "topic": CAMERA_TOPIC})
+    await _send_json(ws, {
+        "type": "hello",
+        "session": session.id,
+        "cam": cam or cameras.default,
+        "cams": cameras.names,
+    })
 
     seq = 0
 
     async def next_frame() -> bytes:
         nonlocal seq
-        seq, frame = await frames.next_frame(seq)
+        seq, frame = await hub.next_frame(seq)
         return frame
 
     try:
@@ -189,42 +208,18 @@ async def reset_stats():
     return {"stats": judges.stats()}
 
 
-class PublishRequest(BaseModel):
-    text: str
+@app.get("/cameras")
+async def list_cameras():
+    return {
+        "default": cameras.default,
+        "cameras": [{"name": n, "live": cameras.get(n).has_frame} for n in cameras.names],
+    }
 
 
 @app.get("/health")
 async def health():
-    node = bridge.node
-    return {
-        "status": "ok",
-        "ros_node": node.get_name() if node else None,
-    }
-
-
-@app.post("/publish")
-async def publish(req: PublishRequest):
-    if bridge.node is None:
-        raise HTTPException(status_code=503, detail="ROS 노드가 아직 준비되지 않았습니다")
-    bridge.node.publish(req.text)
-    return {"published": req.text}
-
-
-@app.get("/last")
-async def last():
-    if bridge.node is None:
-        raise HTTPException(status_code=503, detail="ROS 노드가 아직 준비되지 않았습니다")
-    return {"last_message": bridge.node.last_message}
-
-
-@app.get("/topics")
-async def topics():
-    if bridge.node is None:
-        raise HTTPException(status_code=503, detail="ROS 노드가 아직 준비되지 않았습니다")
-    return {
-        name: types
-        for name, types in bridge.node.get_topic_names_and_types()
-    }
+    source = "mock" if config.MOCK else config.CAMERA_SOURCE
+    return {"status": "ok", "camera_source": source, "cameras": cameras.names}
 
 
 class SPAStaticFiles(StaticFiles):
@@ -240,9 +235,9 @@ class SPAStaticFiles(StaticFiles):
 
 
 # API 라우트를 모두 등록한 뒤에 마운트해야 API 경로가 먼저 매칭된다.
-if (FRONTEND_DIR / "index.html").is_file():
-    app.mount("/", SPAStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+if (config.FRONTEND_DIR / "index.html").is_file():
+    app.mount("/", SPAStaticFiles(directory=config.FRONTEND_DIR, html=True), name="frontend")
 else:
     @app.get("/")
     async def index():
-        return FileResponse(STATIC_DIR / "index.html")
+        return FileResponse(config.STATIC_DIR / "index.html")

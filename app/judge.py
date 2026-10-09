@@ -1,12 +1,11 @@
 """판정 / 모션 이벤트의 누적 통계, 이력, 웹소켓 구독자를 관리한다.
 
 카메라 프레임과 달리 판정 이벤트는 하나도 빠지면 안 되므로 구독자마다 큐를 둔다.
-ROS 콜백은 spin 스레드에서 불리므로 call_soon_threadsafe 로 이벤트 루프에 넘기고,
+이벤트는 /ingest 엔드포인트(LeRobot 쪽 프로세스)나 MOCK 태스크에서 들어오며,
 상태 변경과 브로드캐스트는 모두 이벤트 루프 안에서만 일어난다.
 """
 
 import asyncio
-import json
 import logging
 import time
 from collections import deque
@@ -53,8 +52,8 @@ class Subscriber:
 
 
 class JudgeHub:
-    def __init__(self) -> None:
-        self._loop: asyncio.AbstractEventLoop | None = None
+    def __init__(self, default_cam: str) -> None:
+        self._default_cam = default_cam
         self._subscribers: set[Subscriber] = set()
         self._reset_state()
 
@@ -65,24 +64,11 @@ class JudgeHub:
         self._cycle_time: float | None = None
         self._last_judge_ts: float | None = None
 
-    def bind(self, loop: asyncio.AbstractEventLoop) -> None:
-        self._loop = loop
+    # ---- 이벤트 입력 (이벤트 루프 안에서만 호출) ----
 
-    # ---- ROS spin 스레드에서 호출 ----
-
-    def push_judge(self, raw: str) -> None:
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._on_judge, raw)
-
-    def push_motion(self, raw: str) -> None:
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._on_motion, raw)
-
-    # ---- 이벤트 루프 안에서만 호출 ----
-
-    def _on_judge(self, raw: str) -> None:
+    def add_judge(self, data: dict) -> dict:
+        """판정 하나를 기록하고 브로드캐스트한다. 형식이 틀리면 ValueError."""
         try:
-            data = json.loads(raw)
             grade = data["grade"]
             if grade not in GRADES:
                 raise ValueError(f"알 수 없는 grade: {grade!r}")
@@ -95,11 +81,12 @@ class JudgeHub:
                 "v_value": data["v_value"],
                 "threshold": data["threshold"],
                 "bbox": list(data["bbox"]),
+                # bbox 가 어느 카메라 프레임 기준인지. 안 주면 기본 카메라.
+                "cam": str(data.get("cam") or self._default_cam),
                 "ts": ts,
             }
-        except (ValueError, KeyError, TypeError) as e:
-            log.warning("판정 메시지 무시: %s (%s)", raw, e)
-            return
+        except (KeyError, TypeError) as e:
+            raise ValueError(f"판정 형식 오류: {e}") from e
 
         self._next_id += 1
         self._counts[grade] += 1
@@ -123,10 +110,11 @@ class JudgeHub:
 
         self._broadcast(judge)
         self._broadcast(self._stats_message())
+        return judge
 
-    def _on_motion(self, raw: str) -> None:
+    def add_motion(self, data: dict) -> dict:
+        """모션 이벤트 하나를 기록하고 브로드캐스트한다. 형식이 틀리면 ValueError."""
         try:
-            data = json.loads(raw)
             motion = {
                 "type": "motion",
                 "approach_speed": float(data["approach_speed"]),
@@ -134,9 +122,8 @@ class JudgeHub:
                 "roll_detected": bool(data["roll_detected"]),
                 "ts": float(data.get("ts") or time.time()),
             }
-        except (ValueError, KeyError, TypeError) as e:
-            log.warning("모션 메시지 무시: %s (%s)", raw, e)
-            return
+        except (KeyError, TypeError) as e:
+            raise ValueError(f"모션 형식 오류: {e}") from e
 
         # 모션은 판정된 물체를 옮긴 결과다. id 가 있으면 그 판정에,
         # 없으면 아직 모션이 붙지 않은 가장 최근 판정에 roll_detected 를 기록한다.
@@ -147,6 +134,7 @@ class JudgeHub:
                 break
 
         self._broadcast(motion)
+        return motion
 
     def _broadcast(self, message: dict) -> None:
         for sub in list(self._subscribers):

@@ -15,6 +15,7 @@
   <span id="status">연결 중...</span>
   <span id="fps"></span>
   <span id="info"></span>
+  <span id="cams"></span>
 </header>
 <img id="frame" alt="camera">
 <script>
@@ -29,14 +30,19 @@ setInterval(() => { fpsEl.textContent = `${count} fps`; count = 0; }, 1000);
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws/camera`);
+  const cam = new URLSearchParams(location.search).get("cam") || "";
+  const ws = new WebSocket(`${proto}://${location.host}/ws/camera${cam ? `?cam=${encodeURIComponent(cam)}` : ""}`);
   ws.binaryType = "blob";
 
   ws.onopen = () => { statusEl.textContent = "연결됨"; };
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") {
       const msg = JSON.parse(ev.data);
-      if (msg.type === "hello") infoEl.textContent = `topic ${msg.topic}`;
+      if (msg.type === "hello") {
+        infoEl.textContent = `카메라 ${msg.cam}`;
+        document.getElementById("cams").innerHTML = msg.cams
+          .map((c) => `<a href="?cam=${encodeURIComponent(c)}" style="color:#8af">${c}</a>`).join(" ");
+      }
       return;
     }
     const url = URL.createObjectURL(ev.data);
