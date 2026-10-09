@@ -262,13 +262,23 @@ reset 직후 모든 `/ws/judge` 에 연결 직후와 같은 순서로 snapshot �
 - 재현: `MOCK=1 MOCK_STALL=1` — 첫 미션의 사과 2 를 집은 뒤 `MISSION_STALE_S + 10` 초 동안 이벤트를 끊었다가 이어 간다. 미션 상태는 메모리에만 있어 서버를 재시작하면
 `idle` 로 돌아온다(이벤트 기록은 DB 에 남는다).
 
-**판정 추가 근거 `extra`**: 등급은 빨강 비율(`v_value`)과 흠 비율을 함께 본다. 로봇이 `extra` 객체를 보내면
+**판정 추가 근거 `extra`**: 등급은 빨강 비율(`v_value`)과 흠·멍·상처를 함께 본다. 로봇이 `extra` 객체를 보내면
 판정 메시지와 DB 에 그대로 실린다(보내지 않으면 판정 메시지에 `extra` 필드가 없다 — 기존과 같다).
+서버는 내용을 해석하지 않고 전달만 한다. 로봇 쪽(Piper `vision.defect_extra`)이 보내는 키:
+
+| 키 | 뜻 |
+|---|---|
+| `dark_ratio`, `bruise_ratio`, `wound_ratio` | 흠(아주 어두운 점) / 멍 / 상처(드러난 과육) 비율, 사과 안쪽 원 기준 |
+| `dark_max`, `bruise_max`, `wound_max` | 상 기준 (이하여야 상) |
+| `dark_low`, `bruise_low`, `wound_low`, `red_low` | 하 기준 (결함은 초과면 하, `red_low` 는 빨강 비율 미만이면 하) |
+| `reasons` | 등급 이유 문자열 목록. 예: `["멍 0.050 > 0.03"]`. 상이면 빈 목록 |
 
 ```json
 {"type": "judge", "id": 6, "grade": "중", "confidence": 0.71, "v_value": 0.62, "threshold": 0.5,
  "bbox": [412, 188, 96, 96], "cam": "top", "ts": 1791527986.84,
- "extra": {"dark_ratio": 0.14, "dark_max": 0.1}}
+ "extra": {"dark_ratio": 0.14, "dark_max": 0.1, "bruise_ratio": 0.0, "wound_ratio": 0.0,
+           "dark_low": 0.25, "bruise_max": 0.03, "bruise_low": 0.12, "wound_max": 0.005, "wound_low": 0.02,
+           "red_low": 0.25, "reasons": ["흠 0.140 > 0.1"]}}
 ```
 
 ### 로봇팔 상태
