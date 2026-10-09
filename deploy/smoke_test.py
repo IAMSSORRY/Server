@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -55,7 +56,8 @@ async def check(cookie: str) -> None:
 
 
 def main() -> None:
-    env = {**os.environ, "MOCK": "1", "FRONTEND_DIR": "/nonexistent"}
+    db = os.path.join(tempfile.mkdtemp(), "smoke.db")
+    env = {**os.environ, "MOCK": "1", "FRONTEND_DIR": "/nonexistent", "DB_PATH": db}
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(PORT)],
         env=env,

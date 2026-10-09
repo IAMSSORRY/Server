@@ -36,6 +36,12 @@ PIPER_STREAM_FPS = float(os.environ.get("PIPER_STREAM_FPS", "15"))
 # PIPER 에서 끊긴(꽂혀 있는) 카메라를 자동으로 다시 연결할지
 PIPER_AUTO_CONNECT = os.environ.get("PIPER_AUTO_CONNECT", "1") == "1"
 
+# 판정 / 모션 기록 SQLite 파일. docker-compose 에서 ./data 를 /data 로 마운트해 컨테이너를 다시 만들어도 남긴다.
+DB_PATH = Path(os.environ.get("DB_PATH", "/data/ssorry.db"))
+
+# CSV 의 time 열 시간대 (UTC 기준 시). 컨테이너는 UTC 라서 한국 시간으로 맞춘다.
+CSV_UTC_OFFSET_HOURS = float(os.environ.get("CSV_UTC_OFFSET_HOURS", "9"))
+
 # /ingest/* 를 보호하는 토큰. 비어 있으면 검사하지 않는다(LAN 신뢰).
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 

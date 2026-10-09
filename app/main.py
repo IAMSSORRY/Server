@@ -1,10 +1,13 @@
 import asyncio
+import csv
+import io
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar
 
-from fastapi import FastAPI, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -13,7 +16,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import config, ingest
 from app.judge import HISTORY_MAX, SubscriberOverflow
 from app.sessions import COOKIE_NAME, Session
-from app.state import cameras, judges, sessions
+from app.db import Store, _number
+from app.state import cameras, judges, sessions, store
 from app.stream import LIVE_WINDOW_S
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
@@ -51,11 +55,14 @@ def _start_sources() -> list[asyncio.Task]:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # 판정 기록을 먼저 복원해야 소스(MOCK 등)가 넣는 판정이 이어지는 id 를 받는다
+    await judges.open()
     tasks = _start_sources()
     yield
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await asyncio.to_thread(store.close)
 
 
 app = FastAPI(title="Ssorry Web API", lifespan=lifespan)
@@ -234,8 +241,44 @@ async def get_stats(limit: int = Query(50, ge=0, le=HISTORY_MAX)):
 
 
 @app.get("/history")
-async def get_history():
-    return judges.history()
+async def get_history(run: int | None = None):
+    """판정 이력. run 을 생략하면 현재 회차 (기존과 같은 응답)."""
+    if run is None or run == judges.run_id:
+        return judges.history()
+    if not await store.call(Store.run_exists, run):
+        raise HTTPException(404, f"없는 회차: {run}")
+    return await store.call(Store.history, run)
+
+
+@app.get("/runs")
+async def list_runs():
+    """회차 목록 (최신순). 현재 회차는 ended_at 이 null 이다."""
+    return await store.call(Store.list_runs)
+
+
+@app.get("/export.csv")
+async def export_csv(run: int | None = None):
+    """판정 이력 CSV. run 을 생략하면 전체 회차. 엑셀에서 한글이 안 깨지게 UTF-8 BOM 을 붙인다."""
+    if run is not None and not await store.call(Store.run_exists, run):
+        raise HTTPException(404, f"없는 회차: {run}")
+    rows = await store.call(Store.export_rows, run)
+
+    csv_tz = timezone(timedelta(hours=config.CSV_UTC_OFFSET_HOURS))
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["run_id", "id", "time", "grade", "confidence", "v_value", "threshold", "roll_detected", "cam"])
+    for r in rows:
+        roll = "" if r["roll_detected"] is None else str(bool(r["roll_detected"])).lower()
+        writer.writerow([
+            r["run_id"], r["id"], datetime.fromtimestamp(r["ts"], csv_tz).isoformat(timespec="milliseconds"),
+            r["grade"], r["confidence"], _number(r["v_value"]), _number(r["threshold"]), roll, r["cam"],
+        ])
+    filename = f"ssorry-run{run}.csv" if run is not None else "ssorry-all.csv"
+    return Response(
+        "\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/stats/reset")

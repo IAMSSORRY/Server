@@ -39,6 +39,7 @@ app/state.py         카메라 허브, 판정 허브, 세션 저장소 (프로�
 app/stream.py        카메라별 최신 프레임 허브
 app/judge.py         판정 / 모션 이벤트, 누적 통계, 이력, 구독자별 큐
 app/sessions.py      로그인 없는 쿠키 세션
+app/db.py            판정 / 모션 기록 SQLite (단일 DB 스레드)
 app/ingest.py        로봇 쪽 프로세스가 이벤트와 프레임을 밀어 넣는 입구
 app/sources/piper.py PIPER Studio 카메라 MJPEG 스트림 수신
 app/sources/mock.py  MOCK=1 일 때 카메라 / 판정 / 모션을 흉내 내는 태스크
@@ -74,7 +75,8 @@ PIPER Studio 와 같은 PC 에 띄운다. 프론트는 시연 노트북에서 �
 4. **업데이트**: CI/CD 러너를 설치했으면 `main` 에 push 하면 자동으로 배포된다(아래). 수동으로는 `git pull && docker compose up -d --build`.
    컨테이너는 `restart: unless-stopped` 라 재부팅 후에도 다시 뜬다.
 
-- 서버는 uvicorn 워커 1개로 돈다. 세션 / 통계 / 이벤트가 프로세스 메모리에 있으므로 워커를 늘리지 않는다.
+- 서버는 uvicorn 워커 1개로 돈다. 세션 / 현재 회차 통계 / 이벤트 구독이 프로세스 메모리에 있으므로 워커를 늘리지 않는다.
+- 판정 기록은 `./data/ssorry.db` 에 남는다(아래 [데이터 보관](#데이터-보관)). CI/CD 배포의 `git reset --hard` 도 `data/` 는 건드리지 않는다.
 - PIPER 카메라는 라벨로 찾고, 재연결할 때마다 `/api/cameras/current` 에서 현재 id 를 다시 찾는다
   (`/dev/videoN` 은 재부팅이나 USB 재연결로 바뀔 수 있다).
   PIPER 는 USB 가 빠졌다 다시 꽂힌 카메라를 스스로 다시 열지 않으므로, 꽂혀 있는데(`present`) 끊긴(`connected: false`)
@@ -145,6 +147,8 @@ docker compose logs -f api
 | `PIPER_AUTO_CONNECT` | `1` | PIPER 에서 끊긴(꽂혀 있는) 카메라를 자동으로 다시 연결 |
 | `PIPER_CAMERAS` | (비어 있음) | `이름=PIPER카메라라벨` 쉼표 목록 (id 도 가능). 빠진 카메라는 ingest 로 받을 수 있다 |
 | `INGEST_TOKEN` | (비어 있음) | 설정하면 `/ingest/*` 에 `Authorization: Bearer <token>` 이 필요하다 |
+| `DB_PATH` | `/data/ssorry.db` | 판정 기록 SQLite 파일 (compose 는 `./data` 를 `/data` 에 마운트) |
+| `CSV_UTC_OFFSET_HOURS` | `9` | `/export.csv` 의 time 열 시간대 (한국 시간) |
 | `CORS_ORIGINS` | (비어 있음) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
 | `FRONTEND_DIST` | `./frontend-dist` | (compose) 프론트 빌드 결과 폴더. 컨테이너의 `/workspace/frontend` 에 마운트된다 |
 
@@ -158,8 +162,10 @@ docker compose logs -f api
 | `WS /ws/camera?cam=<이름>` | 카메라 JPEG 프레임을 바이너리로 계속 전송. `cam` 이 없으면 기본 카메라 |
 | `WS /ws/judge` | 연결 직후 `snapshot`, 이후 `judge` / `stats` / `motion` 이벤트를 JSON 텍스트로 전송 |
 | `GET /stats?limit=50` | 누적 통계, 사이클 타임, 최근 판정 `limit` 개 |
-| `GET /history` | 판정 이력 전체 |
-| `POST /stats/reset` | 누적 통계와 이력 초기화 (데모 재시작용) |
+| `GET /history?run=<id>` | 판정 이력. `run` 을 생략하면 현재 회차 |
+| `POST /stats/reset` | 현재 회차를 닫고 새 회차 시작 (통계 0 부터). 이전 기록은 DB 에 남는다 |
+| `GET /runs` | 회차 목록과 회차별 통계 (최신순) |
+| `GET /export.csv?run=<id>` | 회차 이력 CSV (UTF-8 BOM). `run` 을 생략하면 전체 회차 |
 | `GET /health` | 서버 상태, 카메라 소스 |
 | `POST /ingest/judge` | (로봇 쪽) 판정 하나 |
 | `POST /ingest/motion` | (로봇 쪽) 모션 결과 하나 |
@@ -202,7 +208,7 @@ docker compose logs -f api
 
 로봇 쪽 프로세스가 `POST /ingest/judge`, `POST /ingest/motion` 으로 보낸다.
 판정 이벤트는 하나도 빠지면 안 되므로 웹소켓 클라이언트마다 큐를 둔다
-(카메라는 최신 프레임만 보낸다). 통계와 이력은 메모리에만 있어서 재시작하면 초기화된다.
+(카메라는 최신 프레임만 보낸다). 기록은 SQLite 에 남아 재시작해도 이어진다([데이터 보관](#데이터-보관)).
 
 **로봇 쪽에서 보내는 형식** (`tools/ssorry_client.py` 가 이 형식으로 보낸다)
 
@@ -266,6 +272,14 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 // POST /stats/reset
 {"stats": {"상": 0, "중": 0, "total": 0}}
 
+// GET /runs  (현재 회차는 ended_at 이 null)
+[{"id": 2, "started_at": 1791540643.52, "ended_at": null, "stats": {"상": 6, "중": 2, "total": 8}},
+ {"id": 1, "started_at": 1791540620.35, "ended_at": 1791540643.52, "stats": {"상": 2, "중": 3, "total": 5}}]
+
+// GET /export.csv?run=1  (첫 줄 앞에 UTF-8 BOM)
+run_id,id,time,grade,confidence,v_value,threshold,roll_detected,cam
+1,1,2026-10-09T19:10:24.408+09:00,상,0.88,192,160,true,top
+
 // GET /cameras
 // live: 최근 3초 안에 프레임이 왔는가. last_frame_age: 마지막 프레임 이후 초 (한 번도 안 왔으면 null)
 // error: live 가 false 일 때 소스가 알려준 원인 (없으면 null)
@@ -276,6 +290,31 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 `roll_detected` 는 그 판정에 대한 모션 이벤트가 오기 전까지 `null` 이다.
 `cycle_time` 은 판정이 두 번 이상 들어오기 전까지 `null` 이다.
 
+## 데이터 보관
+
+판정 / 모션 기록은 SQLite(`DB_PATH`, 기본 `/data/ssorry.db`)에 남는다. 파이썬 기본 `sqlite3` 만 쓴다.
+compose 가 `./data` 를 마운트하므로 컨테이너를 다시 만들어도 파일이 남는다. `data/` 는 git 에 올라가지 않는다.
+
+- **회차(run)**: 기록은 지우지 않는다. `POST /stats/reset` 은 현재 회차에 `ended_at` 을 채우고 새 회차를 연다.
+  대시보드가 보는 통계 / recent / `GET /stats` / `GET /history` 는 현재 회차 기준이다.
+- **재시작**: 서버가 뜰 때 끝나지 않은 가장 최근 회차를 이어 쓰고, 그 회차의 판정으로 통계, recent, 다음 id 를 복원한다.
+  `cycle_time` 은 재시작 뒤 다음 판정부터 다시 잰다(그 전까지 null).
+- **id / ts**: 판정 id 는 회차 안에서 1부터 증가하고, id 와 ts 는 판정 하나에 고정이다(복원해도 같다).
+  프론트의 IndexedDB 백업 키 `${round(ts*1000)}-${id}` 가 이 값에 기대고 있다. 회차가 바뀌면 id 는 1부터 다시 시작한다.
+- **모션**: 들어오면 `motions` 에 쌓고, 대상 판정의 `roll_detected` 를 DB 에도 갱신한다.
+- **쓰기 방식**: DB 작업은 전용 스레드 하나에서 순서대로 돈다. 쓰기는 기다리지 않아 asyncio 루프를 막지 않고,
+  실패하면 로그(`DB 쓰기 실패`)만 남기고 판정 브로드캐스트는 계속된다. `PRAGMA journal_mode=WAL, synchronous=NORMAL`.
+- **테이블**
+
+  ```sql
+  runs(id INTEGER PRIMARY KEY, started_at REAL NOT NULL, ended_at REAL)
+  judges(run_id, id, grade, confidence, v_value, threshold, bbox /* JSON */, cam, ts, roll_detected, PRIMARY KEY(run_id, id))
+  motions(run_id, judge_id, approach_speed, place_height, roll_detected, ts)
+  ```
+
+- **백업**: `cp data/ssorry.db* <백업 위치>` 또는 `GET /export.csv` 로 받는다. 서버가 도는 중에 파일을 복사할 때는
+  `-wal`, `-shm` 파일도 같이 복사한다.
+
 ## 개발 환경
 
 로컬 `.venv` (Python 3.10) 에 `requirements.txt` 를 설치하면 PyCharm 에서 바로 실행 / 디버깅할 수 있다.
@@ -283,5 +322,5 @@ ROS 를 걷어냈으므로 컨테이너가 필수는 아니다.
 
 ```bash
 .venv/bin/pip install -r requirements.txt
-MOCK=1 FRONTEND_DIR=./frontend-dist .venv/bin/uvicorn app.main:app --reload
+MOCK=1 FRONTEND_DIR=./frontend-dist DB_PATH=./data/dev.db .venv/bin/uvicorn app.main:app --reload
 ```

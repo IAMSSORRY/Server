@@ -3,12 +3,18 @@
 카메라 프레임과 달리 판정 이벤트는 하나도 빠지면 안 되므로 구독자마다 큐를 둔다.
 이벤트는 /ingest 엔드포인트(LeRobot 쪽 프로세스)나 MOCK 태스크에서 들어오며,
 상태 변경과 브로드캐스트는 모두 이벤트 루프 안에서만 일어난다.
+
+기록은 SQLite(app/db.py)에도 남긴다. 메모리 상태(통계, recent, 다음 id)는 현재 회차(run)의 것이고,
+서버가 다시 뜨면 끝나지 않은 회차를 DB 에서 읽어 복원한다. DB 쓰기는 기다리지 않으며,
+실패해도 브로드캐스트는 계속된다.
 """
 
 import asyncio
 import logging
 import time
 from collections import deque
+
+from app.db import Store
 
 log = logging.getLogger(__name__)
 
@@ -52,10 +58,29 @@ class Subscriber:
 
 
 class JudgeHub:
-    def __init__(self, default_cam: str) -> None:
+    def __init__(self, default_cam: str, store: Store) -> None:
         self._default_cam = default_cam
+        self._store = store
         self._subscribers: set[Subscriber] = set()
+        self._run_id = 0
         self._reset_state()
+
+    async def open(self) -> None:
+        """DB 를 열고 끝나지 않은 회차를 이어 쓴다. 서버 시작 때 한 번 부른다.
+
+        cycle_time 은 복원하지 않는다 — 재시작 사이의 공백이 섞이므로 다음 판정부터 다시 잰다.
+        """
+        self._run_id, entries = await self._store.open()
+        self._reset_state()
+        for entry in entries:
+            self._counts[entry["grade"]] = self._counts.get(entry["grade"], 0) + 1
+            self._history.append(entry)
+        if entries:
+            self._next_id = entries[-1]["id"] + 1
+
+    @property
+    def run_id(self) -> int:
+        return self._run_id
 
     def _reset_state(self) -> None:
         self._next_id = 1
@@ -107,6 +132,7 @@ class JudgeHub:
             "ts": ts,
             "roll_detected": None,
         })
+        self._store.submit(self._store.insert_judge, self._run_id, judge)
 
         self._broadcast(judge)
         self._broadcast(self._stats_message())
@@ -128,10 +154,13 @@ class JudgeHub:
         # 모션은 판정된 물체를 옮긴 결과다. id 가 있으면 그 판정에,
         # 없으면 아직 모션이 붙지 않은 가장 최근 판정에 roll_detected 를 기록한다.
         target_id = data.get("id")
+        matched_id = None
         for entry in reversed(self._history):
             if entry["id"] == target_id or (target_id is None and entry["roll_detected"] is None):
                 entry["roll_detected"] = motion["roll_detected"]
+                matched_id = entry["id"]
                 break
+        self._store.submit(self._store.insert_motion, self._run_id, matched_id, motion)
 
         self._broadcast(motion)
         return motion
@@ -168,6 +197,9 @@ class JudgeHub:
         }
 
     def reset(self) -> None:
+        """통계 초기화 = 현재 회차를 닫고 새 회차를 연다. 기록은 DB 에 남는다."""
+        ending, self._run_id = self._run_id, self._run_id + 1
+        self._store.submit(self._store.start_run, ending, self._run_id, time.time())
         self._reset_state()
         # 열려 있는 화면도 0 으로 맞추도록 snapshot 을 다시 보낸다.
         self._broadcast(self.snapshot())

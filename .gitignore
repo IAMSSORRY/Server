@@ -11,3 +11,6 @@ frontend-dist/
 
 # 배포 설정 (토큰 포함)
 .env
+
+# 판정 기록 DB (SQLite)
+data/
