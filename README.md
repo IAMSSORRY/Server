@@ -157,7 +157,7 @@ docker compose logs -f api
 | `ARM_MONITOR` | `CAMERA_SOURCE=piper` 면 `1` | PIPER 로봇팔 상태 감시(`GET /arm`). 읽기만 한다 |
 | `MISSION_STALE_S` | `60` | 진행 중 미션에서 로봇 이벤트가 이만큼 없거나 로봇팔이 이만큼 끊기면 `stalled` |
 | `MOCK_STALL` | `0` | `1` 이면 MOCK 미션을 중간에 멈춰 `stalled` 를 재현 |
-| `CORS_ORIGINS` | (비어 있음) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
+| `CORS_ORIGINS` | `https://www.apah.site,https://apah.site` (compose) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
 | `FRONTEND_DIST` | `./frontend-dist` | (compose) 프론트 빌드 결과 폴더. 컨테이너의 `/workspace/frontend` 에 마운트된다 |
 
 ## 엔드포인트
