@@ -18,6 +18,7 @@ services:
       CAMERA_SOURCE: ${CAMERA_SOURCE:-ingest}
       PIPER_URL: ${PIPER_URL:-http://host.docker.internal}
       PIPER_CAMERAS: ${PIPER_CAMERAS:-}
+      PIPER_AUTO_CONNECT: ${PIPER_AUTO_CONNECT:-1}
       INGEST_TOKEN: ${INGEST_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     extra_hosts:

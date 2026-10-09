@@ -77,7 +77,9 @@ PIPER Studio 와 같은 PC 에 띄운다. 프론트는 시연 노트북에서 �
 - 서버는 uvicorn 워커 1개로 돈다. 세션 / 통계 / 이벤트가 프로세스 메모리에 있으므로 워커를 늘리지 않는다.
 - PIPER 카메라는 라벨로 찾고, 재연결할 때마다 `/api/cameras/current` 에서 현재 id 를 다시 찾는다
   (`/dev/videoN` 은 재부팅이나 USB 재연결로 바뀔 수 있다).
-  PIPER 에서 `connected: false` 인 카메라에는 붙지 않고 로그에 "연결돼 있지 않다" 를 남기며 다시 확인한다.
+  PIPER 는 USB 가 빠졌다 다시 꽂힌 카메라를 스스로 다시 열지 않으므로, 꽂혀 있는데(`present`) 끊긴(`connected: false`)
+  카메라는 서버가 `POST /api/cameras/connect` 로 다시 연다(PIPER 화면의 [연결] 버튼과 같다, 10초에 한 번까지).
+  끄려면 `PIPER_AUTO_CONNECT=0`. 스트림이 5초 넘게 조용하면 끊고 카메라 상태부터 다시 본다.
   라벨은 실제로 쓸 카메라에 붙였는지 확인한다(다른 USB 카메라에 붙어 있으면 그 화면이 나간다).
 - LeRobot 쪽 `SsorryClient` 에는 `.env` 의 `INGEST_TOKEN` 과 같은 값을 준다. 같은 PC 면 주소는 `http://localhost:8000`.
 
@@ -140,6 +142,7 @@ docker compose logs -f api
 | `CAMERAS` | `top,wrist` | 카메라 이름. 첫 번째가 기본 카메라 |
 | `CAMERA_SOURCE` | `ingest` | `piper`: PIPER 스트림을 받아온다 / `ingest`: `WS /ingest/camera/{cam}` 으로 받는다 |
 | `PIPER_URL` | `http://host.docker.internal` | PIPER Studio 웹 주소 (nginx, 기본 포트 80) |
+| `PIPER_AUTO_CONNECT` | `1` | PIPER 에서 끊긴(꽂혀 있는) 카메라를 자동으로 다시 연결 |
 | `PIPER_CAMERAS` | (비어 있음) | `이름=PIPER카메라라벨` 쉼표 목록 (id 도 가능). 빠진 카메라는 ingest 로 받을 수 있다 |
 | `INGEST_TOKEN` | (비어 있음) | 설정하면 `/ingest/*` 에 `Authorization: Bearer <token>` 이 필요하다 |
 | `CORS_ORIGINS` | (비어 있음) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |

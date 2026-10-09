@@ -41,6 +41,7 @@ def _start_sources() -> list[asyncio.Task]:
                 continue
             tasks.append(asyncio.create_task(piper.pull_camera(
                 name, ref, cameras.get(name), config.PIPER_URL, config.PIPER_STREAM_FPS,
+                auto_connect=config.PIPER_AUTO_CONNECT,
             )))
         return tasks
 

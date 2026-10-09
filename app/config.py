@@ -33,6 +33,8 @@ PIPER_URL = os.environ.get("PIPER_URL", "http://localhost").rstrip("/")
 # /dev/videoN 은 재부팅하면 바뀔 수 있으므로 PIPER 화면에서 라벨을 붙여 라벨로 적는다.
 PIPER_CAMERAS = _map("PIPER_CAMERAS")
 PIPER_STREAM_FPS = float(os.environ.get("PIPER_STREAM_FPS", "15"))
+# PIPER 에서 끊긴(꽂혀 있는) 카메라를 자동으로 다시 연결할지
+PIPER_AUTO_CONNECT = os.environ.get("PIPER_AUTO_CONNECT", "1") == "1"
 
 # /ingest/* 를 보호하는 토큰. 비어 있으면 검사하지 않는다(LAN 신뢰).
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")

@@ -7,10 +7,15 @@ PIPER Studio 는 카메라를 camerad 데몬이 독점하고, 게이트웨이가
 PIPER 의 일반 USB 카메라 id 는 `/dev/videoN` 이라 재부팅이나 USB 재연결로 번호가 바뀐다.
 그래서 설정에는 PIPER 화면에서 붙인 **라벨**을 적고, 연결할 때마다
 `GET /api/cameras/current` 에서 그 라벨의 현재 id 를 찾는다.
+
+PIPER 는 USB 가 빠졌다 다시 꽂힌 카메라를 스스로 다시 열지 않는다(`present` 이지만 `connected: false`).
+그래서 등록돼 있고 꽂혀 있는데 연결이 끊긴 카메라는 `POST /api/cameras/connect` 로 다시 연다.
+PIPER 화면의 [연결] 버튼과 같은 호출이다. PIPER_AUTO_CONNECT=0 이면 하지 않는다.
 """
 
 import asyncio
 import logging
+import time
 from urllib.parse import quote
 
 import httpx
@@ -21,6 +26,11 @@ log = logging.getLogger(__name__)
 
 # 카메라가 복구되면 이 시간 안에 다시 붙는다
 RECONNECT_MAX_S = 3.0
+# 스트림이 열려 있어도 이 시간 동안 데이터가 없으면 끊고 카메라 상태를 다시 본다.
+# PIPER 는 한 번 프레임을 보낸 스트림을 카메라가 빠져도 닫지 않는다.
+STALL_TIMEOUT_S = 5.0
+# 자동 연결 시도 간격. 장치를 여는 일이라 매 재시도마다 하지 않는다.
+AUTO_CONNECT_INTERVAL_S = 10.0
 
 
 async def _read_parts(response: httpx.Response):
@@ -55,6 +65,8 @@ def _describe(e: Exception) -> str:
     """화면에 보여줄 실패 이유."""
     if isinstance(e, httpx.ConnectError):
         return "PIPER Studio 에 연결할 수 없다 (PIPER 가 꺼져 있거나 주소가 틀렸다)"
+    if isinstance(e, httpx.ReadTimeout):
+        return f"카메라에서 {STALL_TIMEOUT_S:.0f}초 넘게 프레임이 오지 않는다 (PIPER 스트림 멈춤)"
     if isinstance(e, httpx.TimeoutException):
         return "PIPER Studio 가 응답하지 않는다"
     if isinstance(e, httpx.HTTPStatusError):
@@ -62,9 +74,25 @@ def _describe(e: Exception) -> str:
     return str(e) or type(e).__name__
 
 
-async def resolve_camera_id(client: httpx.AsyncClient, base_url: str, ref: str) -> str:
+async def _auto_connect(client: httpx.AsyncClient, base_url: str, ref: str, cam: dict) -> None:
+    """끊긴 카메라를 PIPER 에서 다시 연다. 실패하면 이유를 담아 RuntimeError."""
+    log.info("PIPER 카메라 %r(%s) 가 끊겨 있어 다시 연결을 요청한다", ref, cam["id"])
+    response = await client.post(f"{base_url}/api/cameras/connect", json={"id": cam["id"]})
+    if response.status_code >= 400:
+        try:
+            detail = response.json().get("detail")
+        except ValueError:
+            detail = response.text
+        raise RuntimeError(f"PIPER 에서 {ref!r}({cam['id']}) 다시 연결 실패: {detail}")
+    log.info("PIPER 카메라 %r(%s) 다시 연결됨", ref, cam["id"])
+
+
+async def resolve_camera_id(
+    client: httpx.AsyncClient, base_url: str, ref: str, connect=None,
+) -> str:
     """라벨(또는 id, profile_key, 표시명) → PIPER 의 현재 카메라 id.
 
+    connect 가 주어지면 꽂혀 있는데 끊긴 카메라를 만났을 때 connect(cam) 을 await 한다.
     목록에서 못 찾으면 ref 를 id 로 보고 그대로 쓴다.
     """
     response = await client.get(f"{base_url}/api/cameras/current")
@@ -74,9 +102,14 @@ async def resolve_camera_id(client: httpx.AsyncClient, base_url: str, ref: str) 
         matches = [c for c in cams if c.get(key) == ref]
         if len(matches) == 1:
             cam = matches[0]
+            if cam.get("present") is False:
+                raise RuntimeError(f"{ref!r}({cam['id']}) 카메라가 뽑혀 있다 — USB 를 확인하세요")
             if cam.get("connected") is False:
-                # 연결 안 된 카메라의 스트림은 멈춘 프레임만 준다. 붙지 말고 다시 확인한다.
-                raise RuntimeError(f"PIPER 에서 {ref!r}({cam['id']}) 가 연결돼 있지 않다 — 카메라 페이지에서 연결하세요")
+                # 연결 안 된 카메라의 스트림은 멈춘 프레임만 준다. 그대로 붙지 않는다.
+                if connect is None:
+                    raise RuntimeError(
+                        f"PIPER 에서 {ref!r}({cam['id']}) 가 연결돼 있지 않다 — 카메라 페이지에서 연결하세요")
+                await connect(cam)
             return cam["id"]
         if len(matches) > 1:
             raise RuntimeError(f"PIPER 카메라 {key}={ref!r} 가 {len(matches)}개라 고를 수 없다")
@@ -85,14 +118,28 @@ async def resolve_camera_id(client: httpx.AsyncClient, base_url: str, ref: str) 
     return ref
 
 
-async def pull_camera(name: str, ref: str, hub: FrameHub, base_url: str, fps: float) -> None:
+async def pull_camera(
+    name: str, ref: str, hub: FrameHub, base_url: str, fps: float, auto_connect: bool = True,
+) -> None:
     """ref 는 PIPER 카메라 라벨(권장) 또는 id."""
     backoff = 1.0
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0)) as client:
+    last_connect_try = -AUTO_CONNECT_INTERVAL_S
+    # read 는 스트림 파트 사이의 간격이다 — 이만큼 프레임이 없으면 멈춘 스트림으로 보고 다시 붙는다.
+    timeout = httpx.Timeout(10.0, read=STALL_TIMEOUT_S)
+
+    async def connect(cam: dict) -> None:
+        nonlocal last_connect_try
+        wait = AUTO_CONNECT_INTERVAL_S - (time.monotonic() - last_connect_try)
+        if wait > 0:
+            raise RuntimeError(f"PIPER 에서 {ref!r}({cam['id']}) 가 끊겨 있다 — {wait:.0f}초 뒤 다시 연결을 시도한다")
+        last_connect_try = time.monotonic()
+        await _auto_connect(client, base_url, ref, cam)
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
         while True:
             try:
                 # 재연결할 때마다 다시 찾는다 — 그 사이 장치 번호가 바뀌었을 수 있다
-                cam_id = await resolve_camera_id(client, base_url, ref)
+                cam_id = await resolve_camera_id(client, base_url, ref, connect if auto_connect else None)
                 url = f"{base_url}/api/cameras/{quote(cam_id, safe='/')}/stream"
                 async with client.stream("GET", url, params={"fps": fps}) as response:
                     response.raise_for_status()
@@ -105,7 +152,8 @@ async def pull_camera(name: str, ref: str, hub: FrameHub, base_url: str, fps: fl
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                log.warning("PIPER 카메라 %s 연결 실패 (%s), %.0f초 뒤 재시도", name, e, backoff)
-                hub.set_error(_describe(e))
+                reason = _describe(e)
+                log.warning("PIPER 카메라 %s 연결 실패 (%s), %.0f초 뒤 재시도", name, reason, backoff)
+                hub.set_error(reason)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, RECONNECT_MAX_S)
