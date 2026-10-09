@@ -1,0 +1,9 @@
+.venv/
+.ros2-stubs/
+__pycache__/
+*.pyc
+
+# PyCharm — 인터프리터 설정은 로컬 경로에 묶여 있어 공유하지 않는다
+.idea/workspace.xml
+.idea/misc.xml
+.idea/*.iml

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ssorry Camera</title>
+<style>
+  body { margin: 0; background: #111; color: #ddd; font: 14px system-ui, sans-serif; }
+  header { padding: 8px 16px; display: flex; gap: 16px; }
+  #frame { display: block; max-width: 100%; margin: 0 auto; background: #000; }
+</style>
+</head>
+<body>
+<header>
+  <span id="status">연결 중...</span>
+  <span id="fps"></span>
+  <span id="info"></span>
+</header>
+<img id="frame" alt="camera">
+<script>
+const img = document.getElementById("frame");
+const statusEl = document.getElementById("status");
+const fpsEl = document.getElementById("fps");
+const infoEl = document.getElementById("info");
+let count = 0;
+let currentUrl = null;
+
+setInterval(() => { fpsEl.textContent = `${count} fps`; count = 0; }, 1000);
+
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws/camera`);
+  ws.binaryType = "blob";
+
+  ws.onopen = () => { statusEl.textContent = "연결됨"; };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "hello") infoEl.textContent = `topic ${msg.topic}`;
+      return;
+    }
+    const url = URL.createObjectURL(ev.data);
+    img.onload = () => { if (currentUrl) URL.revokeObjectURL(currentUrl); currentUrl = url; };
+    img.src = url;
+    count++;
+  };
+  ws.onclose = (ev) => {
+    statusEl.textContent = `끊김 (${ev.code}), 재연결 중...`;
+    // 세션이 없으면(4401) 페이지를 새로 받아 쿠키를 발급받는다.
+    if (ev.code === 4401) { location.reload(); return; }
+    setTimeout(connect, 1000);
+  };
+}
+connect();
+</script>
+</body>
+</html>
