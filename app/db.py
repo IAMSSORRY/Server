@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS judges (
     roll_detected INTEGER NULL,
     PRIMARY KEY (run_id, id)
 );
+CREATE TABLE IF NOT EXISTS events (
+    run_id INTEGER,
+    event TEXT,
+    data TEXT,               -- JSON
+    ts REAL
+);
 CREATE TABLE IF NOT EXISTS motions (
     run_id INTEGER,
     judge_id INTEGER NULL,
@@ -109,6 +115,11 @@ class Store:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(SCHEMA)
+        # 나중에 생긴 컬럼. 옛 DB 파일에는 없으므로 더한다.
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(judges)")}
+        if "extra" not in columns:
+            conn.execute("ALTER TABLE judges ADD COLUMN extra TEXT NULL")   # JSON, 판정 추가 근거
+            conn.commit()
         self._conn = conn
 
         row = conn.execute("SELECT id FROM runs WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1").fetchone()
@@ -134,10 +145,11 @@ class Store:
     @staticmethod
     def insert_judge(conn, run_id: int, judge: dict) -> None:
         conn.execute(
-            "INSERT INTO judges (run_id, id, grade, confidence, v_value, threshold, bbox, cam, ts, roll_detected)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            "INSERT INTO judges (run_id, id, grade, confidence, v_value, threshold, bbox, cam, ts, roll_detected, extra)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
             (run_id, judge["id"], judge["grade"], judge["confidence"], judge["v_value"], judge["threshold"],
-             json.dumps(judge["bbox"]), judge["cam"], judge["ts"]),
+             json.dumps(judge["bbox"]), judge["cam"], judge["ts"],
+             json.dumps(judge["extra"], ensure_ascii=False) if "extra" in judge else None),
         )
         conn.commit()
 
@@ -154,6 +166,15 @@ class Store:
                 "UPDATE judges SET roll_detected = ? WHERE run_id = ? AND id = ?",
                 (int(motion["roll_detected"]), run_id, judge_id),
             )
+        conn.commit()
+
+    @staticmethod
+    def insert_event(conn, run_id: int, event: dict) -> None:
+        data = {k: v for k, v in event.items() if k not in ("event", "ts")}
+        conn.execute(
+            "INSERT INTO events (run_id, event, data, ts) VALUES (?, ?, ?, ?)",
+            (run_id, event["event"], json.dumps(data, ensure_ascii=False), event["ts"]),
+        )
         conn.commit()
 
     @staticmethod
@@ -194,6 +215,13 @@ class Store:
     def history(conn, run_id: int) -> list[dict]:
         rows = conn.execute("SELECT * FROM judges WHERE run_id = ? ORDER BY id", (run_id,)).fetchall()
         return [history_entry(r) for r in rows]
+
+    @staticmethod
+    def events(conn, run_id: int, limit: int) -> list[dict]:
+        rows = conn.execute(
+            "SELECT event, data, ts FROM events WHERE run_id = ? ORDER BY rowid DESC LIMIT ?", (run_id, limit),
+        ).fetchall()
+        return [{"event": r["event"], "ts": r["ts"], **json.loads(r["data"] or "{}")} for r in reversed(rows)]
 
     @staticmethod
     def export_rows(conn, run_id: int | None) -> list[sqlite3.Row]:

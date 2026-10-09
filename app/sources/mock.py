@@ -2,7 +2,8 @@
 
 카메라마다 단색 배경 위에 원 몇 개를 그린 JPEG 를 만들고,
 판정의 bbox 는 기본 카메라 JPEG 에 실제로 그려진 원의 위치와 맞춘다.
-판정 / 모션은 /ingest 로 들어오는 것과 같은 형식으로 JudgeHub 에 넣는다.
+판정 / 모션 / 미션 이벤트는 /ingest 로 들어오는 것과 같은 형식으로 JudgeHub 에 넣는다.
+미션은 사과 10개를 차례로 처리하고(약 10% 는 파지 실패로 건너뜀) 끝나면 3초 뒤 다시 시작한다.
 """
 
 import asyncio
@@ -18,9 +19,10 @@ from app.stream import CameraHubs
 
 WIDTH, HEIGHT = 640, 480
 FPS = 10
-JUDGE_EVERY = 4.0  # 초
 MOTION_DELAY = 1.5  # 판정 후 모션 이벤트까지
 THRESHOLD = 160
+DARK_MAX = 0.1      # 흠 비율 상한 (이보다 크면 중)
+APPLE_COUNT = 10    # 미션 한 번에 사과 수
 BACKGROUNDS = [(40, 44, 52), (30, 50, 40), (50, 36, 36)]
 
 
@@ -55,42 +57,86 @@ async def run(cameras: CameraHubs, judges: JudgeHub) -> None:
         name: (BACKGROUNDS[i % len(BACKGROUNDS)], _circles(i))
         for i, name in enumerate(cameras.names)
     }
-    next_judge = started + JUDGE_EVERY
-    pending_motion: float | None = None
+    # 할 일 목록: (시각, 함수). 사과 한 개의 사이클을 실제 미션 순서대로 흉내 낸다.
+    schedule: list[tuple[float, object]] = []
+    state = {"apple": 0, "scale": 1.0, "release_h": 0.05, "positions": None}
+
+    def mission(event: str, **fields) -> None:
+        judges.add_mission({"event": event, "ts": time.time(), **fields})
+
+    def plan_apple(t0: float) -> None:
+        """t0 부터 사과 하나: 사과 시작 → pick → (실패면 건너뜀) → inspect → 판정 → place → 모션 → home."""
+        state["apple"] += 1
+        i = state["apple"]
+        if i > APPLE_COUNT:
+            schedule.append((t0, lambda: mission("end", duration_s=round(time.time() - state["t_start"], 1),
+                                                 results=[])))
+            schedule.append((t0 + 3.0, lambda: plan_mission(time.time())))
+            return
+        picked = random.random() > 0.1
+        schedule.append((t0, lambda: (mission("apple", index=i, total=APPLE_COUNT), mission("phase", phase="pick"))))
+        schedule.append((t0 + 1.0, lambda: mission("pick", ok=picked, attempt=0,
+                                                   width_mm=round(random.uniform(60, 80), 1) if picked else 0.0)))
+        if not picked:
+            schedule.append((t0 + 1.5, lambda: mission("skip", index=i, reason="파지 실패")))
+            schedule.append((t0 + 2.0, lambda: plan_apple(time.time())))
+            return
+        schedule.append((t0 + 2.0, lambda: mission("phase", phase="inspect")))
+        schedule.append((t0 + 3.0, judge))
+        schedule.append((t0 + 3.0 + MOTION_DELAY, motion))
+        schedule.append((t0 + 3.5 + MOTION_DELAY, lambda: plan_apple(time.time())))
+
+    def plan_mission(t0: float) -> None:
+        state.update(apple=0, t_start=t0)
+        mission("start", apple_count=APPLE_COUNT, sim=True)
+        plan_apple(t0 + 0.5)
+
+    def judge() -> None:
+        x, y, r, _ = random.choice(state["positions"])
+        v_value = random.randint(110, 230)
+        dark = round(random.uniform(0.0, 0.15), 3)
+        judges.add_judge({
+            "grade": "상" if v_value >= THRESHOLD and dark <= DARK_MAX else "중",
+            "confidence": round(random.uniform(0.7, 0.99), 2),
+            "v_value": v_value,
+            "threshold": THRESHOLD,
+            "bbox": [x - r, y - r, 2 * r, 2 * r],
+            "cam": cameras.default,
+            "ts": time.time(),
+            "extra": {"dark_ratio": dark, "dark_max": DARK_MAX},
+        })
+        mission("phase", phase="place")
+
+    def motion() -> None:
+        rolled = random.random() < 0.2
+        judges.add_motion({
+            "approach_speed": round(state["scale"], 3),
+            "place_height": round(state["release_h"], 4),
+            "roll_detected": rolled,
+            "ts": time.time(),
+        })
+        # 굴림이면 20% 감속 (로봇 쪽 adaptive.py 와 같은 규칙), 아니면 조금 복구
+        state["scale"] = state["scale"] * 0.8 if rolled else min(1.0, state["scale"] * 1.1)
+        state["release_h"] = max(0.02, state["release_h"] * 0.8) if rolled else min(0.05, state["release_h"] * 1.1)
+        mission("adaptive", scale=round(state["scale"], 3), release_h=round(state["release_h"], 4),
+                frozen=False, down_streak=1 if rolled else 0)
+        mission("phase", phase="home")
+
+    plan_mission(started)
 
     while True:
         now = time.time()
-        default_positions = None
         for name, (background, circles) in scenes.items():
             positions = _positions(circles, now - started)
             if name == cameras.default:
-                default_positions = positions
+                state["positions"] = positions
             # JPEG 인코딩은 CPU 작업이라 스레드로 넘긴다
             frame = await asyncio.to_thread(_jpeg, background, positions, name)
             cameras.get(name).publish(frame)
 
-        if now >= next_judge:
-            next_judge = now + JUDGE_EVERY
-            x, y, r, _ = random.choice(default_positions)
-            v_value = random.randint(110, 230)
-            judges.add_judge({
-                "grade": "상" if v_value >= THRESHOLD else "중",
-                "confidence": round(random.uniform(0.7, 0.99), 2),
-                "v_value": v_value,
-                "threshold": THRESHOLD,
-                "bbox": [x - r, y - r, 2 * r, 2 * r],
-                "cam": cameras.default,
-                "ts": now,
-            })
-            pending_motion = now + MOTION_DELAY
-
-        if pending_motion is not None and now >= pending_motion:
-            pending_motion = None
-            judges.add_motion({
-                "approach_speed": round(random.uniform(0.5, 1.0), 2),
-                "place_height": round(random.uniform(0.08, 0.15), 3),
-                "roll_detected": random.random() < 0.2,
-                "ts": now,
-            })
+        due = [item for item in schedule if item[0] <= now]
+        for item in sorted(due, key=lambda it: it[0]):
+            schedule.remove(item)
+            item[1]()
 
         await asyncio.sleep(max(0.0, 1.0 / FPS - (time.time() - now)))

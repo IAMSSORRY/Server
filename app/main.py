@@ -230,9 +230,11 @@ async def judge_ws(ws: WebSocket):
 
     session.connections += 1
     # subscribe 와 snapshot 은 await 없이 한 번에 만들어지므로, 그 사이 이벤트가 빠지지 않는다.
-    sub, snapshot = judges.subscribe()
+    sub, snapshot, mission = judges.subscribe()
     try:
         await _send_json(ws, snapshot)
+        # snapshot 다음에 현재 미션 상태 (event 는 null). 기존 메시지는 그대로다.
+        await _send_json(ws, mission)
         await _pump(ws, sub.get, lambda message: _send_json(ws, message))
     except SubscriberOverflow:
         # 너무 밀린 클라이언트. 재연결하면 snapshot 부터 다시 받는다.
@@ -313,6 +315,15 @@ async def list_cameras():
             for n in cameras.names
         ],
     }
+
+
+@app.get("/mission")
+async def mission_state(events: int = Query(0, ge=0, le=500)):
+    """로봇 미션 진행 상태. events>0 이면 현재 회차의 최근 미션 이벤트도 준다."""
+    out = {"state": judges.mission.to_dict()}
+    if events:
+        out["events"] = await store.call(Store.events, judges.run_id, events)
+    return out
 
 
 @app.get("/arm")

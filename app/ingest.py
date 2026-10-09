@@ -43,6 +43,15 @@ async def ingest_motion(body: dict):
         raise HTTPException(422, str(e))
 
 
+@router.post("/mission", dependencies=[Depends(_require_token)])
+async def ingest_mission(body: dict):
+    """미션 진행 이벤트. {"event": "start" | "apple" | "phase" | "pick" | "skip" | "adaptive" | "estop" | "end", ...}"""
+    try:
+        return judges.add_mission(body)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, str(e))
+
+
 @router.websocket("/camera/{cam}")
 async def ingest_camera(ws: WebSocket, cam: str):
     """바이너리 메시지 하나 = JPEG 한 장."""

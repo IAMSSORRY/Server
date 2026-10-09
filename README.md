@@ -172,6 +172,8 @@ docker compose logs -f api
 | `POST /stats/reset` | 현재 회차를 닫고 새 회차 시작 (통계 0 부터). 이전 기록은 DB 에 남는다 |
 | `GET /runs` | 회차 목록과 회차별 통계 (최신순) |
 | `GET /export.csv?run=<id>` | 회차 이력 CSV (UTF-8 BOM). `run` 을 생략하면 전체 회차 |
+| `GET /mission?events=<n>` | 로봇 미션 진행 상태. `events` 를 주면 현재 회차의 최근 미션 이벤트 n 개도 |
+| `POST /ingest/mission` | (로봇 쪽) 미션 진행 이벤트 하나 |
 | `GET /arm` | 로봇팔 상태 (PIPER 에서 3초마다 읽기만 한다). `ok` 가 false 면 `message` 에 이유 |
 | `GET /health` | 서버 상태, 카메라 소스 |
 | `POST /ingest/judge` | (로봇 쪽) 판정 하나 |
@@ -210,6 +212,47 @@ docker compose logs -f api
 - 카메라 해상도는 소스가 정한다. PIPER Studio 를 쓰면 그쪽 카메라 설정의 **출력 해상도**가 그대로 나온다.
   ELP 글로벌 셔터(AR0234) 카메라는 저해상도로 열면 센서 가운데만 잘라 화각이 좁아지므로,
   PIPER 에서 캡처 해상도를 넓게(예: 1280x960) 잡고 출력 해상도로 줄이는 것이 좋다.
+
+### 미션 진행 (로봇 쪽에서 보내는 실시간 값)
+
+로봇 쪽([IAMSSORRY/Piper](https://github.com/IAMSSORRY/Piper) `mission.py`)이 판정 / 모션 말고도
+진행 상황을 `POST /ingest/mission` 으로 보낸다. 서버는 상태를 갱신해 `/ws/judge` 로
+`{"type": "mission", "event": {...}, "state": {...}}` 를 보내고, 이벤트를 DB `events` 테이블에 남긴다.
+
+| event | 필드 | 뜻 |
+|---|---|---|
+| `start` | `apple_count`, `sim` | 미션 시작 (상태 초기화) |
+| `apple` | `index`, `total` | n 번째 사과 시작 (1부터) |
+| `phase` | `phase` | 지금 동작: `pick` / `inspect` / `place` / `home` |
+| `pick` | `ok`, `attempt`, `width_mm` | 파지 결과 (`attempt` 0 = 첫 시도) |
+| `skip` | `index`, `reason` | 그 사과 건너뜀 (파지 실패, 도달 불가 등) |
+| `adaptive` | `scale`, `release_h`, `frozen`, `down_streak` | 굴림 적응 조정 상태. `frozen` 이면 자동 조정 중단 |
+| `estop` | `reason` | 비상정지 / 로봇 고장 |
+| `end` | `duration_s`, `results` | 미션 끝 |
+
+알 수 없는 event 도 받아서 저장 / 전달한다(상태는 안 바뀐다). `event` 가 없으면 422.
+
+```json
+// /ws/judge 연결 직후 snapshot 다음에 한 번 (event 는 null), 그 뒤로 이벤트마다
+{"type": "mission", "event": {"event": "pick", "ts": 1791543850.1, "ok": false, "attempt": 0, "width_mm": 0.0},
+ "state": {"status": "running", "sim": false, "apple_count": 10, "apple_index": 3, "phase": "pick",
+           "picks_ok": 2, "picks_failed": 1, "skipped": 0,
+           "adaptive": {"scale": 0.8, "release_h": 0.04, "frozen": false, "down_streak": 1},
+           "estop_reason": null, "started_at": 1791543842.8, "ended_at": null, "duration_s": null,
+           "updated_at": 1791543850.1}}
+```
+
+`status`: `idle`(서버 시작 후 아직 없음) / `running` / `finished` / `estop`. 미션 상태는 메모리에만 있어 서버를 재시작하면
+`idle` 로 돌아온다(이벤트 기록은 DB 에 남는다).
+
+**판정 추가 근거 `extra`**: 등급은 빨강 비율(`v_value`)과 흠 비율을 함께 본다. 로봇이 `extra` 객체를 보내면
+판정 메시지와 DB 에 그대로 실린다(보내지 않으면 판정 메시지에 `extra` 필드가 없다 — 기존과 같다).
+
+```json
+{"type": "judge", "id": 6, "grade": "중", "confidence": 0.71, "v_value": 0.62, "threshold": 0.5,
+ "bbox": [412, 188, 96, 96], "cam": "top", "ts": 1791527986.84,
+ "extra": {"dark_ratio": 0.14, "dark_max": 0.1}}
+```
 
 ### 로봇팔 상태
 
@@ -365,6 +408,9 @@ curl -s -o ~/ssorry-backup/ssorry-all.csv localhost:8000/export.csv   # 또는 C
 
 - `data/` 는 컨테이너(root)가 만들어서 소유자가 root 다. 읽기와 `.backup`(다른 곳으로)은 그대로 되고,
   `data/` 안에 파일을 만들거나 지울 때만 `sudo` 가 필요하다.
+- ⚠ 위의 "도는 중에도 안전"은 **리눅스 호스트**(Ubuntu 배포) 이야기다. macOS 의 Docker Desktop 은 마운트한 폴더에서
+  SQLite 공유 메모리(WAL)를 컨테이너와 나누지 못해, 컨테이너가 쓰는 중에 맥에서 `sqlite3` 로 열면 DB 가 깨질 수 있다
+  (실제로 겪었다). 맥에서는 `curl .../export.csv` 를 쓰거나 컨테이너 안에서 연다.
 - `cp` 로 복사하려면 서버를 멈추거나(`docker compose stop api`), `ssorry.db-wal`, `ssorry.db-shm` 까지 같이 복사한다.
   `.backup` 은 그럴 필요가 없다.
 - 대회 중에는 회차를 넘길 때(`POST /stats/reset` 전후) 한 번씩 `.backup` 해 두면 안전하다. 자동으로 하려면:

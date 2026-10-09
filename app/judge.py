@@ -15,6 +15,7 @@ import time
 from collections import deque
 
 from app.db import Store
+from app.mission import MissionState
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class JudgeHub:
         self._default_cam = default_cam
         self._store = store
         self._subscribers: set[Subscriber] = set()
+        self.mission = MissionState()
         self._run_id = 0
         self._reset_state()
 
@@ -110,6 +112,11 @@ class JudgeHub:
                 "cam": str(data.get("cam") or self._default_cam),
                 "ts": ts,
             }
+            # 선택: 판정의 추가 근거 (예: 흠 비율과 그 상한). 보냈을 때만 메시지에 실린다.
+            if data.get("extra") is not None:
+                if not isinstance(data["extra"], dict):
+                    raise ValueError("extra 는 객체여야 한다")
+                judge["extra"] = data["extra"]
         except (KeyError, TypeError) as e:
             raise ValueError(f"판정 형식 오류: {e}") from e
 
@@ -165,6 +172,17 @@ class JudgeHub:
         self._broadcast(motion)
         return motion
 
+    def add_mission(self, data: dict) -> dict:
+        """미션 이벤트 하나를 반영하고 {"type": "mission", "event", "state"} 를 브로드캐스트한다."""
+        event = self.mission.apply(data)
+        self._store.submit(self._store.insert_event, self._run_id, event)
+        message = self.mission_message(event)
+        self._broadcast(message)
+        return message
+
+    def mission_message(self, event: dict | None = None) -> dict:
+        return {"type": "mission", "event": event, "state": self.mission.to_dict()}
+
     def _broadcast(self, message: dict) -> None:
         for sub in list(self._subscribers):
             if not sub.put(message):
@@ -204,14 +222,14 @@ class JudgeHub:
         # 열려 있는 화면도 0 으로 맞추도록 snapshot 을 다시 보낸다.
         self._broadcast(self.snapshot())
 
-    def subscribe(self) -> tuple[Subscriber, dict]:
-        """구독을 등록하고 그 시점의 snapshot 을 돌려준다.
+    def subscribe(self) -> tuple[Subscriber, dict, dict]:
+        """구독을 등록하고 그 시점의 snapshot 과 미션 상태 메시지를 돌려준다.
 
         await 없이 한 번에 처리하므로 snapshot 과 이후 이벤트 사이에 빠지는 것이 없다.
         """
         sub = Subscriber()
         self._subscribers.add(sub)
-        return sub, self.snapshot()
+        return sub, self.snapshot(), self.mission_message()
 
     def unsubscribe(self, sub: Subscriber) -> None:
         self._subscribers.discard(sub)

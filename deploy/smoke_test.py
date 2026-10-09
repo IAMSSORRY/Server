@@ -46,6 +46,8 @@ async def check(cookie: str) -> None:
     async with websockets.connect(f"ws://{BASE}/ws/judge", additional_headers=headers) as ws:
         snapshot = json.loads(await ws.recv())
         assert snapshot["type"] == "snapshot", snapshot
+        mission = json.loads(await ws.recv())
+        assert mission["type"] == "mission" and "status" in mission["state"], mission
 
     async with websockets.connect(f"ws://{BASE}/ws/judge") as ws:
         try:
