@@ -7,9 +7,17 @@ services:
     volumes:
       # 소스를 마운트해서 --reload 로 즉시 반영
       - ./app:/workspace/app
+      # 프론트 빌드 결과(index.html 이 있는 폴더). 비어 있으면 내장 카메라 뷰어가 뜬다.
+      - ${FRONTEND_DIST:-./frontend-dist}:/workspace/frontend:ro
     environment:
       ROS_DOMAIN_ID: "0"
       RMW_IMPLEMENTATION: rmw_fastrtps_cpp
+      # 셸 환경변수나 .env 로 덮어쓴다. 예: MOCK=1 docker compose up -d
+      MOCK: ${MOCK:-0}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      CAMERA_TOPIC: ${CAMERA_TOPIC:-/camera/image_raw/compressed}
+      JUDGE_TOPIC: ${JUDGE_TOPIC:-/ssorry/judge}
+      MOTION_TOPIC: ${MOTION_TOPIC:-/ssorry/motion}
     networks:
       - rosnet
 

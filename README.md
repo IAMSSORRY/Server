@@ -9,11 +9,13 @@ PyCharm 은 이 컨테이너를 원격 인터프리터로 붙여서 rclpy 자동
 ```
 Dockerfile           ros:humble + fastapi/uvicorn
 docker-compose.yml   포트 8000, app/ 를 마운트해 --reload
-requirements.txt     fastapi, uvicorn, pydantic
+requirements.txt     fastapi, uvicorn, pydantic, pillow(MOCK 프레임용)
 app/main.py          FastAPI 엔드포인트
 app/ros_node.py      rclpy 노드 + spin 스레드 관리
 app/stream.py        ROS 스레드 → asyncio 로 카메라 프레임 전달
 app/sessions.py      로그인 없는 쿠키 세션
+app/judge.py         판정 / 모션 이벤트, 누적 통계, 이력, 구독자별 큐
+app/mock.py          MOCK=1 일 때 카메라 / 판정 / 모션을 흉내 내는 노드
 app/static/          카메라 뷰어 페이지
 ```
 
@@ -31,11 +33,42 @@ docker compose up -d
 docker compose logs -f api
 ```
 
+로봇과 카메라 없이 프론트를 개발할 때는 `MOCK=1` 로 띄운다.
+카메라 프레임(10fps, 640x480), 4초마다 판정, 판정 1.5초 뒤 모션 이벤트가 발행된다.
+
+```bash
+MOCK=1 docker compose up -d
+```
+
+| 환경변수 | 기본값 | 설명 |
+|---|---|---|
+| `MOCK` | `0` | `1` 이면 더미 퍼블리셔를 함께 띄운다 |
+| `CORS_ORIGINS` | (비어 있음) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
+| `CAMERA_TOPIC` | `/camera/image_raw/compressed` | `sensor_msgs/CompressedImage` |
+| `JUDGE_TOPIC` | `/ssorry/judge` | `std_msgs/String` 에 판정 JSON |
+| `MOTION_TOPIC` | `/ssorry/motion` | `std_msgs/String` 에 모션 JSON |
+| `FRONTEND_DIST` | `./frontend-dist` | (compose) 프론트 빌드 결과 폴더. 컨테이너의 `/workspace/frontend` 에 마운트된다 |
+
+### 프론트 서빙
+
+세션은 `SameSite=Lax` 쿠키라서 프론트를 API 와 **같은 출처**에서 열어야 웹소켓에 쿠키가 실린다.
+다른 기기에서 열 때도 프론트를 따로 띄우지 말고 이 서버가 서빙한 `http://<서버 IP>:8000/` 로 연다.
+
+- 프론트 빌드 결과(`index.html` 이 있는 폴더)를 `frontend-dist/` 에 두거나 `FRONTEND_DIST` 로 경로를 준다.
+- `index.html` 이 있으면 `/` 에서 서빙하고, API 에 없는 경로는 `index.html` 로 돌린다(SPA 라우팅).
+- 폴더가 비어 있으면 내장 카메라 뷰어(`app/static/index.html`)가 뜬다.
+- 폴더를 처음 채웠거나 비웠을 때는 서버를 재시작해야 반영된다(`docker compose restart api`). 이미 서빙 중일 때 파일만 바꾸는 건 바로 반영된다.
+- 개발 중에 Vite 같은 dev 서버를 쓸 때는 dev 서버의 프록시로 `/ws`, `/stats`, `/history`, `/session` 을 `localhost:8000` 에 넘기면 같은 출처가 된다.
+
 | 엔드포인트 | 설명 |
 |---|---|
-| `GET /` | 카메라 실시간 뷰어 (세션 쿠키 발급) |
+| `GET /` | 프론트 빌드 결과, 없으면 내장 카메라 뷰어 (세션 쿠키 발급) |
 | `GET /session` | 현재 세션 ID, 열린 웹소켓 수 |
 | `WS /ws/camera` | 카메라 JPEG 프레임을 바이너리로 계속 전송 |
+| `WS /ws/judge` | 연결 직후 `snapshot`, 이후 `judge` / `stats` / `motion` 이벤트를 JSON 텍스트로 전송 |
+| `GET /stats?limit=50` | 누적 통계, 사이클 타임, 최근 판정 `limit` 개 |
+| `GET /history` | 판정 이력 전체 |
+| `POST /stats/reset` | 누적 통계와 이력 초기화 (데모 재시작용) |
 | `GET /health` | 노드 기동 확인 |
 | `POST /publish` | `{"text": "..."}` 를 `/chatter` 토픽으로 발행 |
 | `GET /last` | `/chatter` 에서 마지막으로 수신한 값 |
@@ -52,6 +85,65 @@ raw `Image` 만 내는 카메라라면 image_transport 로 compressed 토픽을 
 - 클라이언트마다 최신 프레임만 보내므로 느린 클라이언트는 중간 프레임을 건너뛴다.
 - 세션은 `ssorry_sid` 쿠키로 구분하며 메모리에만 있다. 쿠키 없이 웹소켓에 붙으면 4401 로 닫힌다.
   연결 없이 1시간 지난 세션은 정리된다.
+
+### 판정 / 모션 이벤트
+
+비전 노드와 모션 노드는 `std_msgs/String` 에 JSON 을 담아 `JUDGE_TOPIC`, `MOTION_TOPIC` 으로 낸다.
+판정 이벤트는 하나도 빠지면 안 되므로 웹소켓 클라이언트마다 큐를 둔다
+(카메라는 최신 프레임만 보낸다). 통계와 이력은 메모리에만 있어서 재시작하면 초기화된다.
+
+**ROS 토픽으로 들어오는 형식**
+
+```json
+// JUDGE_TOPIC — id 는 서버가 붙인다. ts 를 빼면 수신 시각, cycle_time 을 빼면 직전 판정과의 간격을 쓴다.
+{"grade": "상", "confidence": 0.87, "v_value": 182, "threshold": 160, "bbox": [412, 188, 96, 96], "ts": 1791527966.54}
+
+// MOTION_TOPIC — id 를 넣으면 그 판정에, 빼면 모션이 아직 없는 가장 최근 판정에 roll_detected 가 기록된다.
+{"approach_speed": 0.8, "place_height": 0.12, "roll_detected": false, "ts": 1791527968.04}
+```
+
+**`WS /ws/judge` 로 나가는 메시지**
+
+세션 처리는 `/ws/camera` 와 같다(쿠키가 없으면 4401). 큐가 1000개 넘게 밀린 클라이언트는
+이벤트를 버리는 대신 4408 로 끊는다. 재연결하면 `snapshot` 부터 다시 받는다.
+
+```json
+// 연결 직후 한 번, 그리고 POST /stats/reset 직후 모든 클라이언트에 한 번
+{"type": "snapshot",
+ "stats": {"상": 3, "중": 2, "total": 5},
+ "cycle_time": 4.2,
+ "recent": [{"id": 5, "grade": "중", "confidence": 0.81, "v_value": 140, "threshold": 160,
+             "ts": 1791527982.74, "roll_detected": null}]}
+
+// 판정마다. bbox 는 /ws/camera JPEG 기준 픽셀 [x, y, w, h]
+{"type": "judge", "id": 6, "grade": "상", "confidence": 0.87, "v_value": 182, "threshold": 160,
+ "bbox": [412, 188, 96, 96], "ts": 1791527986.84}
+
+// 판정 직후 갱신된 누적 통계
+{"type": "stats", "stats": {"상": 4, "중": 2, "total": 6}, "cycle_time": 4.1}
+
+// 모션 이벤트
+{"type": "motion", "approach_speed": 0.8, "place_height": 0.12, "roll_detected": false, "ts": 1791527988.34}
+```
+
+**REST 응답**
+
+```json
+// GET /stats?limit=50
+{"stats": {"상": 4, "중": 2, "total": 6}, "cycle_time": 4.1,
+ "recent": [{"id": 6, "grade": "상", "confidence": 0.87, "v_value": 182, "threshold": 160,
+             "ts": 1791527986.84, "roll_detected": false}]}
+
+// GET /history
+[{"id": 1, "grade": "상", "confidence": 0.93, "v_value": 229, "threshold": 160,
+  "ts": 1791527966.54, "roll_detected": true}]
+
+// POST /stats/reset
+{"stats": {"상": 0, "중": 0, "total": 0}}
+```
+
+`roll_detected` 는 그 판정에 대한 모션 이벤트가 오기 전까지 `null` 이다.
+`cycle_time` 은 판정이 두 번 이상 들어오기 전까지 `null` 이다.
 
 컨테이너 안에서 ROS2 CLI 를 쓰려면:
 
