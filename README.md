@@ -71,7 +71,7 @@ PIPER Studio 와 같은 PC 에 띄운다. 프론트는 시연 노트북에서 �
 3. **확인**: 같은 네트워크의 다른 기기에서 `http://<Ubuntu IP>:8000/` 을 열면 내장 카메라 뷰어가 뜬다.
    `http://<Ubuntu IP>:8000/cameras` 에서 두 카메라가 `"live": true` 인지 본다.
 
-4. **업데이트**: `git pull && docker compose up -d --build`.
+4. **업데이트**: CI/CD 러너를 설치했으면 `main` 에 push 하면 자동으로 배포된다(아래). 수동으로는 `git pull && docker compose up -d --build`.
    컨테이너는 `restart: unless-stopped` 라 재부팅 후에도 다시 뜬다.
 
 - 서버는 uvicorn 워커 1개로 돈다. 세션 / 통계 / 이벤트가 프로세스 메모리에 있으므로 워커를 늘리지 않는다.
@@ -80,6 +80,30 @@ PIPER Studio 와 같은 PC 에 띄운다. 프론트는 시연 노트북에서 �
   PIPER 에서 `connected: false` 인 카메라에는 붙지 않고 로그에 "연결돼 있지 않다" 를 남기며 다시 확인한다.
   라벨은 실제로 쓸 카메라에 붙였는지 확인한다(다른 USB 카메라에 붙어 있으면 그 화면이 나간다).
 - LeRobot 쪽 `SsorryClient` 에는 `.env` 의 `INGEST_TOKEN` 과 같은 값을 준다. 같은 PC 면 주소는 `http://localhost:8000`.
+
+### CI/CD (자동 배포)
+
+[`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml)
+
+- **테스트** (GitHub 서버, 모든 push / PR): 문법 검사, MOCK 서버 스모크 테스트(`deploy/smoke_test.py`), Docker 이미지 빌드.
+- **배포** (Ubuntu 로봇 PC 의 자체 호스팅 러너, `main` push 와 수동 실행만): 테스트가 통과하면
+  `~/ssorry` 를 그 커밋으로 맞추고 `docker compose up -d --build` 후 `/health` 를 확인한다.
+  로봇 PC 는 사설 IP(172.30.1.21)라 GitHub 서버가 직접 들어올 수 없어서, PC 안의 러너가 일을 받아 간다.
+- 공개 저장소이므로 배포 잡은 PR 에서 돌지 않는다(포크의 코드가 로봇 PC 에서 실행되지 않게).
+
+**러너 설치 (Ubuntu 에서 한 번)**
+
+```bash
+# 1. 등록 토큰 받기 (저장소 관리자, 1시간 유효)
+gh api -X POST repos/IAMSSORRY/Server/actions/runners/registration-token --jq .token
+# 2. Ubuntu 에서
+cd ~/ssorry && ./deploy/setup-runner.sh <토큰>
+```
+
+- 서버 클론 위치가 `~/ssorry` 가 아니면 저장소 Settings → Variables → Actions 에 `DEPLOY_DIR` 을 만든다.
+- 배포는 `git reset --hard` 로 클론을 커밋에 맞춘다. `.env`, `frontend-dist/` 같은 git 밖 파일은 그대로지만,
+  로봇 PC 클론에서 직접 고친 추적 파일은 지워진다. 고칠 것은 커밋해서 올린다.
+- 수동 배포: GitHub → Actions → CI/CD → Run workflow.
 
 ### 시연 노트북에서 프론트 붙이기
 

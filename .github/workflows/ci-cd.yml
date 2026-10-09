@@ -1,0 +1,79 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 테스트
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt websockets
+
+      - name: 문법 검사
+        run: python -m compileall -q app tools
+
+      - name: MOCK 서버 스모크 테스트
+        run: python deploy/smoke_test.py
+
+      - name: Docker 이미지 빌드
+        run: docker build -t ssorry-api:ci .
+
+  deploy:
+    name: Ubuntu 로봇 PC 배포
+    needs: test
+    # ⚠ 공개 저장소다. 자체 호스팅 러너에서는 main 푸시(와 수동 실행)만 돌린다.
+    #   pull_request 로 돌리면 포크의 코드가 로봇 PC 에서 실행된다.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: [self-hosted, ssorry]
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    env:
+      # 서버가 떠 있는 클론 위치. 저장소 Variables 에 DEPLOY_DIR 로 바꿀 수 있다.
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+    steps:
+      - name: 배포
+        run: |
+          set -euo pipefail
+          DIR="${DEPLOY_DIR:-$HOME/ssorry}"
+          if [ ! -d "$DIR/.git" ]; then
+            git clone "https://github.com/${{ github.repository }}.git" "$DIR"
+          fi
+          if [ ! -f "$DIR/.env" ]; then
+            echo "::error::$DIR/.env 가 없다. .env.example 을 복사해 값을 채운 뒤 다시 실행하세요"
+            exit 1
+          fi
+          cd "$DIR"
+          # 이 실행이 테스트한 커밋으로 맞춘다. .env, frontend-dist 같은 git 밖 파일은 건드리지 않는다.
+          git fetch --quiet origin main
+          git reset --hard "${{ github.sha }}"
+          docker compose up -d --build --remove-orphans
+          docker image prune -f > /dev/null
+
+      - name: 헬스 체크
+        run: |
+          DIR="${DEPLOY_DIR:-$HOME/ssorry}"
+          PORT=$(grep -E '^SSORRY_PORT=' "$DIR/.env" | cut -d= -f2 || true)
+          URL="http://localhost:${PORT:-8000}/health"
+          for i in $(seq 1 30); do
+            if curl -fsS "$URL"; then echo; echo "배포 완료: ${{ github.sha }}"; exit 0; fi
+            sleep 2
+          done
+          echo "::error::$URL 가 60초 안에 응답하지 않았다"
+          docker compose -f "$DIR/docker-compose.yml" logs --tail 50 api
+          exit 1
