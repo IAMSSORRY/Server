@@ -30,7 +30,8 @@ SO-101 로봇팔로 물체를 집어 상/중으로 판정하는 과정을 웹에
 
 ```
 Dockerfile           python:3.10-slim + fastapi/uvicorn
-docker-compose.yml   포트 8000, app/ 를 마운트해 --reload
+docker-compose.yml   포트 8000, app/ 마운트, 설정은 .env
+.env.example         Ubuntu 배포용 설정 예시
 requirements.txt     fastapi, uvicorn, pydantic, httpx(PIPER 스트림), pillow(MOCK 프레임)
 app/main.py          FastAPI 앱, 세션 미들웨어, 웹소켓 / REST, 프론트 서빙
 app/config.py        환경변수
@@ -45,39 +46,75 @@ app/static/          내장 카메라 뷰어 (프론트 빌드가 없을 때)
 tools/ssorry_client.py  LeRobot 쪽에서 쓰는 클라이언트 (표준 라이브러리 + websockets)
 ```
 
-## 실행
+## 배포 (Ubuntu 로봇 PC)
+
+PIPER Studio 와 같은 PC 에 띄운다. 프론트는 시연 노트북에서 로컬로 띄우고 이 서버 IP 로 붙는다.
+
+1. **PIPER Studio 에서 카메라 준비**: 카메라 페이지에서 두 카메라를 등록 / 연결하고 라벨을 `top`, `wrist` 로 붙인다.
+   같은 모델 두 대는 이름이 같아서 라벨이 없으면 구분할 수 없다. 확인:
+
+   ```bash
+   curl -s http://localhost/api/cameras/current | python3 -m json.tool   # label, id, connected 확인
+   ```
+
+2. **설정과 실행**
+
+   ```bash
+   git clone https://github.com/IAMSSORRY/Server.git ssorry && cd ssorry
+   cp .env.example .env
+   sed -i "s/^INGEST_TOKEN=.*/INGEST_TOKEN=$(openssl rand -hex 16)/" .env   # 나머지 값도 확인
+   docker compose up -d --build
+   docker compose logs -f api      # "PIPER 카메라 연결: top ← ..." 가 보이면 정상
+   sudo ufw allow 8000/tcp         # ufw 를 쓰는 경우
+   ```
+
+3. **확인**: 같은 네트워크의 다른 기기에서 `http://<Ubuntu IP>:8000/` 을 열면 내장 카메라 뷰어가 뜬다.
+   `http://<Ubuntu IP>:8000/cameras` 에서 두 카메라가 `"live": true` 인지 본다.
+
+4. **업데이트**: `git pull && docker compose up -d --build`.
+   컨테이너는 `restart: unless-stopped` 라 재부팅 후에도 다시 뜬다.
+
+- 서버는 uvicorn 워커 1개로 돈다. 세션 / 통계 / 이벤트가 프로세스 메모리에 있으므로 워커를 늘리지 않는다.
+- PIPER 카메라는 라벨로 찾고, 재연결할 때마다 `/api/cameras/current` 에서 현재 id 를 다시 찾는다
+  (`/dev/videoN` 은 재부팅이나 USB 재연결로 바뀔 수 있다).
+- LeRobot 쪽 `SsorryClient` 에는 `.env` 의 `INGEST_TOKEN` 과 같은 값을 준다. 같은 PC 면 주소는 `http://localhost:8000`.
+
+### 시연 노트북에서 프론트 붙이기
+
+세션 쿠키가 `SameSite=Lax` 라서 브라우저가 `localhost:5173` 에서 `http://<Ubuntu IP>:8000` 을 직접 부르면
+쿠키가 실리지 않아 웹소켓이 4401 로 끊긴다. Vite dev 서버의 프록시로 넘기면 같은 출처가 된다.
+
+```js
+// vite.config.js
+const API = "http://<Ubuntu IP>:8000";
+export default {
+  server: {
+    proxy: {
+      "/ws": { target: API, ws: true },
+      "/stats": API, "/history": API, "/session": API, "/cameras": API,
+    },
+  },
+};
+```
+
+## 개발
 
 ```bash
-docker compose up -d
+UVICORN_RELOAD=1 MOCK=1 docker compose up -d   # 소스 변경 시 자동 재시작 + 더미 데이터
 docker compose logs -f api
 ```
 
-로봇과 카메라 없이 프론트를 개발할 때는 `MOCK=1` 로 띄운다.
-카메라마다 프레임(10fps, 640x480), 4초마다 판정, 판정 1.5초 뒤 모션 이벤트가 나온다.
-
-```bash
-MOCK=1 docker compose up -d
-```
-
-PIPER Studio 의 카메라를 쓸 때 (같은 Ubuntu PC 에서 띄우는 경우):
-
-```bash
-CAMERA_SOURCE=piper \
-PIPER_URL=http://host.docker.internal \
-PIPER_CAMERAS="top=<PIPER 카메라 id>,wrist=<PIPER 카메라 id>" \
-docker compose up -d
-```
-
-PIPER 카메라 id 는 PIPER Studio 의 카메라 페이지(또는 `GET <PIPER>/api/cameras/current`)에서 확인한다.
-다른 PC 에서 띄우면 `PIPER_URL` 을 `http://<Ubuntu IP>` 로 준다.
+`MOCK=1` 이면 카메라마다 프레임(10fps, 640x480), 4초마다 판정, 판정 1.5초 뒤 모션 이벤트가 나온다.
 
 | 환경변수 | 기본값 | 설명 |
 |---|---|---|
+| `SSORRY_PORT` | `8000` | 호스트에 여는 포트 |
+| `UVICORN_RELOAD` | (비어 있음) | `1` 이면 소스 변경 시 자동 재시작 (개발용) |
 | `MOCK` | `0` | `1` 이면 카메라 / 판정 / 모션을 흉내 낸다. 다른 소스 설정은 무시된다 |
 | `CAMERAS` | `top,wrist` | 카메라 이름. 첫 번째가 기본 카메라 |
 | `CAMERA_SOURCE` | `ingest` | `piper`: PIPER 스트림을 받아온다 / `ingest`: `WS /ingest/camera/{cam}` 으로 받는다 |
 | `PIPER_URL` | `http://host.docker.internal` | PIPER Studio 웹 주소 (nginx, 기본 포트 80) |
-| `PIPER_CAMERAS` | (비어 있음) | `이름=PIPER카메라id` 쉼표 목록. 빠진 카메라는 ingest 로 받을 수 있다 |
+| `PIPER_CAMERAS` | (비어 있음) | `이름=PIPER카메라라벨` 쉼표 목록 (id 도 가능). 빠진 카메라는 ingest 로 받을 수 있다 |
 | `INGEST_TOKEN` | (비어 있음) | 설정하면 `/ingest/*` 에 `Authorization: Bearer <token>` 이 필요하다 |
 | `CORS_ORIGINS` | (비어 있음) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
 | `FRONTEND_DIST` | `./frontend-dist` | (compose) 프론트 빌드 결과 폴더. 컨테이너의 `/workspace/frontend` 에 마운트된다 |

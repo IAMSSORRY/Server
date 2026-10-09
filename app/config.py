@@ -29,7 +29,8 @@ CAMERA_SOURCE = os.environ.get("CAMERA_SOURCE", "ingest")
 
 # PIPER Studio 웹 주소 (nginx). 예: http://192.168.0.20
 PIPER_URL = os.environ.get("PIPER_URL", "http://localhost").rstrip("/")
-# 우리 카메라 이름 → PIPER 카메라 id. 예: top=/dev/video0,wrist=/dev/video2
+# 우리 카메라 이름 → PIPER 카메라 라벨(권장) 또는 id. 예: top=top,wrist=wrist
+# /dev/videoN 은 재부팅하면 바뀔 수 있으므로 PIPER 화면에서 라벨을 붙여 라벨로 적는다.
 PIPER_CAMERAS = _map("PIPER_CAMERAS")
 PIPER_STREAM_FPS = float(os.environ.get("PIPER_STREAM_FPS", "15"))
 

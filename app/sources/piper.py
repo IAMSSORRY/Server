@@ -3,6 +3,10 @@
 PIPER Studio 는 카메라를 camerad 데몬이 독점하고, 게이트웨이가
 `GET /api/cameras/{cam_id}/stream` 으로 `multipart/x-mixed-replace` 스트림을 낸다.
 카메라마다 연결 하나를 열어 두고, 끊기면 다시 붙는다.
+
+PIPER 의 일반 USB 카메라 id 는 `/dev/videoN` 이라 재부팅이나 USB 재연결로 번호가 바뀐다.
+그래서 설정에는 PIPER 화면에서 붙인 **라벨**을 적고, 연결할 때마다
+`GET /api/cameras/current` 에서 그 라벨의 현재 id 를 찾는다.
 """
 
 import asyncio
@@ -46,12 +50,34 @@ async def _read_parts(response: httpx.Response):
             buf = buf[body_start + length:]
 
 
-async def pull_camera(name: str, cam_id: str, hub: FrameHub, base_url: str, fps: float) -> None:
-    url = f"{base_url}/api/cameras/{quote(cam_id, safe='/')}/stream"
+async def resolve_camera_id(client: httpx.AsyncClient, base_url: str, ref: str) -> str:
+    """라벨(또는 id, profile_key, 표시명) → PIPER 의 현재 카메라 id.
+
+    목록에서 못 찾으면 ref 를 id 로 보고 그대로 쓴다.
+    """
+    response = await client.get(f"{base_url}/api/cameras/current")
+    response.raise_for_status()
+    cams = response.json().get("cameras", [])
+    for key in ("label", "id", "profile_key", "display_name"):
+        matches = [c for c in cams if c.get(key) == ref]
+        if len(matches) == 1:
+            return matches[0]["id"]
+        if len(matches) > 1:
+            raise RuntimeError(f"PIPER 카메라 {key}={ref!r} 가 {len(matches)}개라 고를 수 없다")
+    known = ", ".join(f"{c.get('label') or '-'}({c.get('id')})" for c in cams) or "없음"
+    log.warning("PIPER 카메라 목록에 %r 가 없어 id 로 보고 그대로 쓴다. 등록된 카메라: %s", ref, known)
+    return ref
+
+
+async def pull_camera(name: str, ref: str, hub: FrameHub, base_url: str, fps: float) -> None:
+    """ref 는 PIPER 카메라 라벨(권장) 또는 id."""
     backoff = 1.0
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=30.0)) as client:
         while True:
             try:
+                # 재연결할 때마다 다시 찾는다 — 그 사이 장치 번호가 바뀌었을 수 있다
+                cam_id = await resolve_camera_id(client, base_url, ref)
+                url = f"{base_url}/api/cameras/{quote(cam_id, safe='/')}/stream"
                 async with client.stream("GET", url, params={"fps": fps}) as response:
                     response.raise_for_status()
                     log.info("PIPER 카메라 연결: %s ← %s", name, url)

@@ -2,15 +2,17 @@ services:
   api:
     build: .
     container_name: ssorry-api
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${SSORRY_PORT:-8000}:8000"
     volumes:
-      # 소스를 마운트해서 --reload 로 즉시 반영
+      # 소스를 마운트한다. 운영에서는 git pull 뒤 `docker compose restart api` 로 반영한다.
       - ./app:/workspace/app
       # 프론트 빌드 결과(index.html 이 있는 폴더). 비어 있으면 내장 카메라 뷰어가 뜬다.
       - ${FRONTEND_DIST:-./frontend-dist}:/workspace/frontend:ro
+    # 설정은 .env 에 둔다 (.env.example 참고). 셸 환경변수가 .env 보다 우선한다.
     environment:
-      # 셸 환경변수나 .env 로 덮어쓴다. 예: MOCK=1 docker compose up -d
+      UVICORN_RELOAD: ${UVICORN_RELOAD:-}
       MOCK: ${MOCK:-0}
       CAMERAS: ${CAMERAS:-top,wrist}
       CAMERA_SOURCE: ${CAMERA_SOURCE:-ingest}
@@ -19,5 +21,5 @@ services:
       INGEST_TOKEN: ${INGEST_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     extra_hosts:
-      # 리눅스에서도 host.docker.internal 로 호스트(PIPER Studio)에 붙을 수 있게
+      # 리눅스에서도 host.docker.internal 로 호스트(PIPER Studio nginx :80)에 붙을 수 있게
       - "host.docker.internal:host-gateway"

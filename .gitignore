@@ -8,3 +8,6 @@ __pycache__/
 .idea/misc.xml
 .idea/*.iml
 frontend-dist/
+
+# 배포 설정 (토큰 포함)
+.env

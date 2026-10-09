@@ -34,12 +34,12 @@ def _start_sources() -> list[asyncio.Task]:
 
         tasks = []
         for name in cameras.names:
-            cam_id = config.PIPER_CAMERAS.get(name)
-            if cam_id is None:
+            ref = config.PIPER_CAMERAS.get(name)
+            if ref is None:
                 log.warning("PIPER_CAMERAS 에 %s 가 없어 이 카메라는 비워 둔다", name)
                 continue
             tasks.append(asyncio.create_task(piper.pull_camera(
-                name, cam_id, cameras.get(name), config.PIPER_URL, config.PIPER_STREAM_FPS,
+                name, ref, cameras.get(name), config.PIPER_URL, config.PIPER_STREAM_FPS,
             )))
         return tasks
 
