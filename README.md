@@ -312,8 +312,51 @@ compose 가 `./data` 를 마운트하므로 컨테이너를 다시 만들어도 
   motions(run_id, judge_id, approach_speed, place_height, roll_detected, ts)
   ```
 
-- **백업**: `cp data/ssorry.db* <백업 위치>` 또는 `GET /export.csv` 로 받는다. 서버가 도는 중에 파일을 복사할 때는
-  `-wal`, `-shm` 파일도 같이 복사한다.
+- **백업**: 아래 "Ubuntu 로봇 PC 에서" 참고.
+
+### Ubuntu 로봇 PC 에서
+
+**설치할 것은 없다.** SQLite 는 컨테이너 안의 파이썬 기본 모듈이 쓰고, `~/ssorry/data/` 는 배포(`docker compose up`) 때
+자동으로 생긴다. 아래는 확인과 운영용이다 (명령은 `~/ssorry` 에서).
+
+```bash
+# 1. 배포 후 확인
+ls -la data/                                   # ssorry.db, ssorry.db-wal, ssorry.db-shm
+docker logs ssorry-api 2>&1 | grep 회차         # "새 회차 1 시작" 또는 "회차 N 이어서 사용: 판정 M건 복원"
+curl -s localhost:8000/runs                     # 회차 목록
+
+# 2. 직접 들여다보기 (선택, sqlite3 CLI 설치)
+sudo apt install -y sqlite3
+sqlite3 -readonly -header -column data/ssorry.db \
+  "SELECT run_id, id, grade, v_value, roll_detected, datetime(ts, 'unixepoch', '+9 hours') AS time
+   FROM judges ORDER BY run_id DESC, id DESC LIMIT 20"
+
+# 3. 백업 — 서버가 도는 중에도 안전하다. data/ 는 root 소유라 백업은 내 홈 아래에 둔다
+mkdir -p ~/ssorry-backup
+sqlite3 data/ssorry.db ".backup $HOME/ssorry-backup/ssorry-$(date +%Y%m%d-%H%M).db"
+curl -s -o ~/ssorry-backup/ssorry-all.csv localhost:8000/export.csv   # 또는 CSV 로 (엑셀용)
+```
+
+- `data/` 는 컨테이너(root)가 만들어서 소유자가 root 다. 읽기와 `.backup`(다른 곳으로)은 그대로 되고,
+  `data/` 안에 파일을 만들거나 지울 때만 `sudo` 가 필요하다.
+- `cp` 로 복사하려면 서버를 멈추거나(`docker compose stop api`), `ssorry.db-wal`, `ssorry.db-shm` 까지 같이 복사한다.
+  `.backup` 은 그럴 필요가 없다.
+- 대회 중에는 회차를 넘길 때(`POST /stats/reset` 전후) 한 번씩 `.backup` 해 두면 안전하다. 자동으로 하려면:
+
+  ```bash
+  # 30분마다 ~/ssorry-backup 에 백업, 최근 48개만 남김
+  (crontab -l 2>/dev/null; echo '*/30 * * * * mkdir -p $HOME/ssorry-backup && sqlite3 $HOME/ssorry/data/ssorry.db ".backup $HOME/ssorry-backup/ssorry-$(date +\%Y\%m\%d-\%H\%M).db" && ls -1t $HOME/ssorry-backup/ssorry-*.db | tail -n +49 | xargs -r rm -f') | crontab -
+  crontab -l          # 등록 확인
+  ```
+
+- **모든 기록을 지우고 처음부터** (되돌릴 수 없다. 먼저 백업):
+
+  ```bash
+  docker compose stop api && sudo rm -f data/ssorry.db* && docker compose start api
+  ```
+
+  평소 데모를 다시 시작할 때는 이게 아니라 `POST /stats/reset`(새 회차)을 쓴다.
+- 크기: 판정 한 건이 수백 바이트라 하루 수천 건이어도 몇 MB 다.
 
 ## 개발 환경
 
