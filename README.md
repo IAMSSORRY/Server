@@ -77,6 +77,8 @@ PIPER Studio 와 같은 PC 에 띄운다. 프론트는 시연 노트북에서 �
 - 서버는 uvicorn 워커 1개로 돈다. 세션 / 통계 / 이벤트가 프로세스 메모리에 있으므로 워커를 늘리지 않는다.
 - PIPER 카메라는 라벨로 찾고, 재연결할 때마다 `/api/cameras/current` 에서 현재 id 를 다시 찾는다
   (`/dev/videoN` 은 재부팅이나 USB 재연결로 바뀔 수 있다).
+  PIPER 에서 `connected: false` 인 카메라에는 붙지 않고 로그에 "연결돼 있지 않다" 를 남기며 다시 확인한다.
+  라벨은 실제로 쓸 카메라에 붙였는지 확인한다(다른 USB 카메라에 붙어 있으면 그 화면이 나간다).
 - LeRobot 쪽 `SsorryClient` 에는 `.env` 의 `INGEST_TOKEN` 과 같은 값을 준다. 같은 PC 면 주소는 `http://localhost:8000`.
 
 ### 시연 노트북에서 프론트 붙이기
@@ -125,7 +127,7 @@ docker compose logs -f api
 |---|---|
 | `GET /` | 프론트 빌드 결과, 없으면 내장 카메라 뷰어 (세션 쿠키 발급) |
 | `GET /session` | 현재 세션 ID, 열린 웹소켓 수 |
-| `GET /cameras` | 카메라 목록, 기본 카메라, 프레임이 들어오고 있는지 |
+| `GET /cameras` | 카메라 목록, 기본 카메라, 최근 3초 안에 프레임이 왔는지(`live`) |
 | `WS /ws/camera?cam=<이름>` | 카메라 JPEG 프레임을 바이너리로 계속 전송. `cam` 이 없으면 기본 카메라 |
 | `WS /ws/judge` | 연결 직후 `snapshot`, 이후 `judge` / `stats` / `motion` 이벤트를 JSON 텍스트로 전송 |
 | `GET /stats?limit=50` | 누적 통계, 사이클 타임, 최근 판정 `limit` 개 |
@@ -227,7 +229,9 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 {"stats": {"상": 0, "중": 0, "total": 0}}
 
 // GET /cameras
-{"default": "top", "cameras": [{"name": "top", "live": true}, {"name": "wrist", "live": false}]}
+// live: 최근 3초 안에 프레임이 왔는가. last_frame_age: 마지막 프레임 이후 초 (한 번도 안 왔으면 null)
+{"default": "top", "cameras": [{"name": "top", "live": true, "last_frame_age": 0.04},
+                               {"name": "wrist", "live": false, "last_frame_age": null}]}
 ```
 
 `roll_detected` 는 그 판정에 대한 모션 이벤트가 오기 전까지 `null` 이다.

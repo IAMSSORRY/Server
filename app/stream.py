@@ -6,6 +6,10 @@
 """
 
 import asyncio
+import time
+
+# 이 시간 안에 프레임이 왔으면 살아 있는 카메라로 본다.
+LIVE_WINDOW_S = 3.0
 
 
 class FrameHub:
@@ -13,16 +17,24 @@ class FrameHub:
         self._event = asyncio.Event()
         self._frame: bytes | None = None
         self._seq = 0
+        self._last_at: float | None = None
 
     def publish(self, frame: bytes) -> None:
         self._frame = frame
         self._seq += 1
+        self._last_at = time.monotonic()
         event, self._event = self._event, asyncio.Event()
         event.set()
 
     @property
-    def has_frame(self) -> bool:
-        return self._frame is not None
+    def last_frame_age(self) -> float | None:
+        """마지막 프레임 이후 지난 초. 한 번도 안 왔으면 None."""
+        return None if self._last_at is None else time.monotonic() - self._last_at
+
+    @property
+    def live(self) -> bool:
+        age = self.last_frame_age
+        return age is not None and age < LIVE_WINDOW_S
 
     async def next_frame(self, last_seq: int) -> tuple[int, bytes]:
         """last_seq 이후의 새 프레임이 들어올 때까지 기다린다."""

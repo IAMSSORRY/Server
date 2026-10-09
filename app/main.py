@@ -208,11 +208,23 @@ async def reset_stats():
     return {"stats": judges.stats()}
 
 
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 2)
+
+
 @app.get("/cameras")
 async def list_cameras():
     return {
         "default": cameras.default,
-        "cameras": [{"name": n, "live": cameras.get(n).has_frame} for n in cameras.names],
+        "cameras": [
+            {
+                "name": n,
+                # 최근 3초 안에 프레임이 왔는가. 한 번 받고 멈춘 카메라는 false 다.
+                "live": cameras.get(n).live,
+                "last_frame_age": _round(cameras.get(n).last_frame_age),
+            }
+            for n in cameras.names
+        ],
     }
 
 

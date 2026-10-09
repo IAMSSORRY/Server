@@ -61,7 +61,11 @@ async def resolve_camera_id(client: httpx.AsyncClient, base_url: str, ref: str) 
     for key in ("label", "id", "profile_key", "display_name"):
         matches = [c for c in cams if c.get(key) == ref]
         if len(matches) == 1:
-            return matches[0]["id"]
+            cam = matches[0]
+            if cam.get("connected") is False:
+                # 연결 안 된 카메라의 스트림은 멈춘 프레임만 준다. 붙지 말고 다시 확인한다.
+                raise RuntimeError(f"PIPER 에서 {ref!r}({cam['id']}) 가 연결돼 있지 않다 — 카메라 페이지에서 연결하세요")
+            return cam["id"]
         if len(matches) > 1:
             raise RuntimeError(f"PIPER 카메라 {key}={ref!r} 가 {len(matches)}개라 고를 수 없다")
     known = ", ".join(f"{c.get('label') or '-'}({c.get('id')})" for c in cams) or "없음"
