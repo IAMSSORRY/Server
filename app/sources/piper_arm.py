@@ -23,6 +23,7 @@ class ArmStatus:
         self.message: str | None = None
         self.arms: list[dict] = []
         self.checked_at: float | None = None
+        self.down_since: float | None = None   # ok 가 false 가 된 시각 (멈춘 미션 판단용)
 
     def to_dict(self) -> dict:
         return {
@@ -39,8 +40,18 @@ class ArmStatus:
                 log.info("로봇팔 정상")
             else:
                 log.warning("로봇팔 이상: %s", message)
+        now = time.time()
+        if not ok and self.down_since is None:
+            self.down_since = now
+        elif ok:
+            self.down_since = None
         self.ok, self.message, self.arms = ok, message, arms
-        self.checked_at = time.time()
+        self.checked_at = now
+
+    @property
+    def down_for(self) -> float | None:
+        """로봇팔이 끊긴 채로 지난 초. 정상이거나 감시하지 않으면 None."""
+        return None if self.down_since is None else time.time() - self.down_since
 
 
 def _summarize(arm: dict) -> dict:

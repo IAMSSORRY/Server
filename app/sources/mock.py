@@ -52,7 +52,9 @@ def _jpeg(background, positions, label: str) -> bytes:
     return buf.getvalue()
 
 
-async def run(cameras: CameraHubs, judges: JudgeHub) -> None:
+async def run(cameras: CameraHubs, judges: JudgeHub, stall: bool = False, resume_after: float = 70.0) -> None:
+    """stall 이면 첫 미션의 사과 2 를 집은 뒤 resume_after 초 동안 미션 이벤트를 끊었다가 이어 간다
+    (서버의 멈춘 미션 처리 재현용, MOCK_STALL=1). 카메라 프레임은 계속 나간다."""
     started = time.time()
     scenes = {
         name: (BACKGROUNDS[i % len(BACKGROUNDS)], _circles(i))
@@ -82,10 +84,15 @@ async def run(cameras: CameraHubs, judges: JudgeHub) -> None:
             schedule.append((t0 + 1.5, lambda: mission("skip", index=i, reason="파지 실패")))
             schedule.append((t0 + 2.0, lambda: plan_apple(time.time())))
             return
-        schedule.append((t0 + 2.0, lambda: mission("phase", phase="inspect")))
-        schedule.append((t0 + 3.0, judge))
-        schedule.append((t0 + 3.0 + MOTION_DELAY, motion))
-        schedule.append((t0 + 3.5 + MOTION_DELAY, lambda: plan_apple(time.time())))
+        # MOCK_STALL: 첫 미션의 사과 2 를 집은 뒤 로봇이 멈춘 것처럼 한동안 아무 이벤트도 보내지 않는다
+        d = 0.0
+        if stall and i == 2 and not state.get("stalled_once"):
+            state["stalled_once"] = True
+            d = resume_after
+        schedule.append((t0 + d + 2.0, lambda: mission("phase", phase="inspect")))
+        schedule.append((t0 + d + 3.0, judge))
+        schedule.append((t0 + d + 3.0 + MOTION_DELAY, motion))
+        schedule.append((t0 + d + 3.5 + MOTION_DELAY, lambda: plan_apple(time.time())))
 
     def plan_mission(t0: float) -> None:
         state.update(apple=0, t_start=t0)

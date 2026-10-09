@@ -17,6 +17,8 @@ services:
       UVICORN_RELOAD: ${UVICORN_RELOAD:-}
       DB_PATH: /data/ssorry.db
       MOCK: ${MOCK:-0}
+      MOCK_STALL: ${MOCK_STALL:-0}
+      MISSION_STALE_S: ${MISSION_STALE_S:-60}
       CAMERAS: ${CAMERAS:-top,wrist}
       CAMERA_SOURCE: ${CAMERA_SOURCE:-ingest}
       PIPER_URL: ${PIPER_URL:-http://host.docker.internal}

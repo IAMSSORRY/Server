@@ -26,6 +26,18 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+async def _watch_mission() -> None:
+    """진행 중 미션이 멈췄는지 1초마다 본다. 요청이 없어도(클라이언트가 없어도) 상태가 바뀌어야 한다."""
+    while True:
+        await asyncio.sleep(1.0)
+        try:
+            event = judges.check_stalled(arm.down_for, config.MISSION_STALE_S)
+            if event is not None:
+                log.warning("미션 멈춤: %s", event["event"]["reason"])
+        except Exception:
+            log.exception("미션 멈춤 감시 실패")
+
+
 def _start_sources() -> list[asyncio.Task]:
     """카메라 / 이벤트 소스를 백그라운드 태스크로 띄운다."""
     if config.MOCK:
@@ -34,7 +46,8 @@ def _start_sources() -> list[asyncio.Task]:
         log.info("MOCK 모드: 카메라 %s, 판정 / 모션 이벤트를 만든다", cameras.names)
         arm.update(True, None, [{"iface": "mock_arm", "role": "follower", "connected": True,
                                  "responding": True, "state": "UP", "ready": True, "transport": "mock"}])
-        return [asyncio.create_task(mock.run(cameras, judges))]
+        return [asyncio.create_task(mock.run(cameras, judges, stall=config.MOCK_STALL,
+                                             resume_after=config.MISSION_STALE_S + 10))]
 
     tasks = []
     if config.ARM_MONITOR:
@@ -65,6 +78,7 @@ async def lifespan(_: FastAPI):
     # 판정 기록을 먼저 복원해야 소스(MOCK 등)가 넣는 판정이 이어지는 id 를 받는다
     await judges.open()
     tasks = _start_sources()
+    tasks.append(asyncio.create_task(_watch_mission()))
     yield
     for task in tasks:
         task.cancel()

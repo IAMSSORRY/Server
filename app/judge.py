@@ -15,7 +15,7 @@ import time
 from collections import deque
 
 from app.db import Store
-from app.mission import MissionState
+from app.mission import MissionState, stall_reason
 
 log = logging.getLogger(__name__)
 
@@ -179,6 +179,14 @@ class JudgeHub:
         message = self.mission_message(event)
         self._broadcast(message)
         return message
+
+    def check_stalled(self, arm_down_s: float | None, stale_s: float) -> dict | None:
+        """진행 중 미션이 멈췄으면 stalled 이벤트를 기록 / 브로드캐스트한다. 감시 태스크가 1초마다 부른다."""
+        found = stall_reason(self.mission, arm_down_s, stale_s, time.time())
+        if found is None:
+            return None
+        reason, idle_s = found
+        return self.add_mission({"event": "stalled", "ts": time.time(), "idle_s": round(idle_s, 1), "reason": reason})
 
     def mission_message(self, event: dict | None = None) -> dict:
         return {"type": "mission", "event": event, "state": self.mission.to_dict()}

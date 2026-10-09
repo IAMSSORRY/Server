@@ -3,6 +3,9 @@
 판정 / 모션 말고도 대시보드가 실시간으로 보여야 하는 것들이다:
 진행(몇 번째 사과, 지금 무슨 동작), 파지 실패 / 건너뜀, 비상정지, 적응형 조정 상태.
 
+진행 중(running)인데 MISSION_STALE_S 동안 로봇 이벤트가 없거나 로봇팔이 끊겨 있으면 서버가 스스로
+"stalled" 로 바꾼다(app/main.py 의 감시 태스크). 그 뒤 로봇 이벤트가 다시 오면 running 으로 돌아간다.
+
 이벤트 하나마다 상태를 갱신하고 `/ws/judge` 로 {"type": "mission", "event": ..., "state": ...} 를 보낸다.
 알 수 없는 이벤트도 버리지 않고 저장 / 전달한다(로봇 쪽이 먼저 새 이벤트를 보내도 깨지지 않게).
 """
@@ -19,6 +22,7 @@ EVENTS = {
     "adaptive": ("scale", "release_h", "frozen", "down_streak"),  # 적응형 조정 상태
     "estop": ("reason",),                                # 비상정지 / 고장
     "end": ("duration_s", "results"),                    # 미션 끝
+    "stalled": ("idle_s", "reason"),                     # (서버가 만든다) 진행 중인데 로봇 소식이 끊김
 }
 
 
@@ -27,7 +31,7 @@ class MissionState:
         self.reset()
 
     def reset(self) -> None:
-        self.status = "idle"            # idle / running / finished / estop
+        self.status = "idle"            # idle / running / stalled / finished / estop
         self.sim: bool | None = None
         self.apple_count: int | None = None
         self.apple_index: int | None = None
@@ -41,6 +45,8 @@ class MissionState:
         self.ended_at: float | None = None
         self.duration_s: float | None = None
         self.updated_at: float | None = None
+        # 마지막 로봇 이벤트를 **서버가 받은** 시각. 멈춤 판단은 로봇 PC 시계(ts)가 아니라 이것으로 한다.
+        self.last_event_at: float | None = None
 
     def new_run(self) -> None:
         """통계 초기화(새 회차) 때 부른다.
@@ -49,7 +55,7 @@ class MissionState:
         움직이므로 진행 상태(status, apple_count, apple_index, phase, adaptive 등)는 그대로 두고,
         진행 중이 아니면(idle / finished / estop) 전체를 idle 초기값으로 되돌린다.
         """
-        if self.status != "running":
+        if self.status not in ("running", "stalled"):
             self.reset()
             return
         self.picks_ok = 0
@@ -86,6 +92,12 @@ class MissionState:
             k: v for k, v in data.items() if k not in ("event", "ts")
         }
 
+        # 멈춤(stalled) 뒤에 로봇 이벤트가 다시 오면 진행 중으로 되돌린다
+        if self.status == "stalled" and name not in ("stalled", "start", "estop", "end"):
+            self.status = "running"
+        if name != "stalled":
+            self.last_event_at = time.time()
+
         if name == "start":
             self.reset()
             self.status = "running"
@@ -113,6 +125,9 @@ class MissionState:
             self.estop_reason = str(payload.get("reason") or "비상정지")
             self.phase = None
             self.ended_at = ts
+        elif name == "stalled":
+            # 어디서 멈췄는지 보여야 하므로 나머지 필드는 그대로, 정상 종료가 아니므로 ended_at 도 비워 둔다
+            self.status = "stalled"
         elif name == "end":
             self.status = "finished"
             self.phase = None
@@ -121,6 +136,18 @@ class MissionState:
 
         self.updated_at = ts
         return {"event": name, "ts": ts, **payload}
+
+
+def stall_reason(state: MissionState, arm_down_s: float | None, stale_s: float, now: float) -> tuple[str, float] | None:
+    """진행 중인 미션이 멈췄는지. 멈췄으면 (이유, 마지막 이벤트 이후 초)."""
+    if state.status != "running" or state.last_event_at is None:
+        return None
+    idle_s = now - state.last_event_at
+    if idle_s >= stale_s:
+        return f"로봇에서 {stale_s:.0f}초 동안 이벤트가 없습니다", idle_s
+    if arm_down_s is not None and arm_down_s >= stale_s:
+        return "로봇팔 연결이 끊겨 미션이 멈췄습니다", idle_s
+    return None
 
 
 def _int(value) -> int | None:

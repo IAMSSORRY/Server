@@ -155,6 +155,8 @@ docker compose logs -f api
 | `DB_PATH` | `/data/ssorry.db` | 판정 기록 SQLite 파일 (compose 는 `./data` 를 `/data` 에 마운트) |
 | `CSV_UTC_OFFSET_HOURS` | `9` | `/export.csv` 의 time 열 시간대 (한국 시간) |
 | `ARM_MONITOR` | `CAMERA_SOURCE=piper` 면 `1` | PIPER 로봇팔 상태 감시(`GET /arm`). 읽기만 한다 |
+| `MISSION_STALE_S` | `60` | 진행 중 미션에서 로봇 이벤트가 이만큼 없거나 로봇팔이 이만큼 끊기면 `stalled` |
+| `MOCK_STALL` | `0` | `1` 이면 MOCK 미션을 중간에 멈춰 `stalled` 를 재현 |
 | `CORS_ORIGINS` | (비어 있음) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
 | `FRONTEND_DIST` | `./frontend-dist` | (compose) 프론트 빌드 결과 폴더. 컨테이너의 `/workspace/frontend` 에 마운트된다 |
 
@@ -229,6 +231,7 @@ docker compose logs -f api
 | `adaptive` | `scale`, `release_h`, `frozen`, `down_streak` | 굴림 적응 조정 상태. `frozen` 이면 자동 조정 중단 |
 | `estop` | `reason` | 비상정지 / 로봇 고장 |
 | `end` | `duration_s`, `results` | 미션 끝 |
+| `stalled` | `idle_s`, `reason` | **서버가 만든다.** 진행 중인데 로봇 소식이 끊김 (아래) |
 
 알 수 없는 event 도 받아서 저장 / 전달한다(상태는 안 바뀐다). `event` 가 없으면 422.
 
@@ -246,7 +249,17 @@ docker compose logs -f api
 진행 상태(`apple_count`, `apple_index`, `phase`, `adaptive` 등)는 그대로 두고, 아니면 state 전체가 idle 초기값이 된다.
 reset 직후 모든 `/ws/judge` 에 연결 직후와 같은 순서로 snapshot → mission(event: null) 을 보낸다.
 
-`status`: `idle`(서버 시작 후 아직 없음) / `running` / `finished` / `estop`. 미션 상태는 메모리에만 있어 서버를 재시작하면
+`status`: `idle`(서버 시작 후 아직 없음) / `running` / `stalled`(멈춤) / `finished` / `estop`.
+
+**멈춘 미션 (`stalled`)**: `running` 인데 마지막 로봇 이벤트 이후 `MISSION_STALE_S`(기본 60초) 동안 이벤트가 없거나,
+로봇팔이 끊긴 상태(`GET /arm` 의 `ok: false`)가 그만큼 이어지면 서버가 스스로 `stalled` 로 바꾼다
+(1초마다 검사, 클라이언트가 없어도 바뀐다. 사과 하나에 실제 장비로 20~25초 걸린다).
+- 이벤트 `{"event": "stalled", "ts": ..., "idle_s": 61.2, "reason": "로봇에서 60초 동안 이벤트가 없습니다"}` 를 기록하고
+  mission 메시지로 보낸다. 로봇팔 때문이면 reason 은 "로봇팔 연결이 끊겨 미션이 멈췄습니다".
+- `apple_index`, `phase`, `picks_ok` 등은 그대로 둔다(어디서 멈췄는지 보이게). 정상 종료가 아니므로 `ended_at` 은 비워 둔다.
+- 그 뒤 로봇 이벤트가 다시 오면 `running` 으로 돌아온다. `start` 가 오면 새 미션, `end` / `estop` 은 그대로 반영.
+- 멈춤 판단은 서버가 이벤트를 **받은** 시각으로 한다(로봇 PC 시계와 무관).
+- 재현: `MOCK=1 MOCK_STALL=1` — 첫 미션의 사과 2 를 집은 뒤 `MISSION_STALE_S + 10` 초 동안 이벤트를 끊었다가 이어 간다. 미션 상태는 메모리에만 있어 서버를 재시작하면
 `idle` 로 돌아온다(이벤트 기록은 DB 에 남는다).
 
 **판정 추가 근거 `extra`**: 등급은 빨강 비율(`v_value`)과 흠 비율을 함께 본다. 로봇이 `extra` 객체를 보내면

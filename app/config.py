@@ -21,6 +21,12 @@ def _map(name: str) -> dict[str, str]:
 CAMERAS = _list("CAMERAS", "top,wrist")
 
 MOCK = os.environ.get("MOCK") == "1"
+# MOCK 미션을 중간에 멈춰서(이벤트를 끊어서) 멈춘 미션 처리를 재현한다
+MOCK_STALL = os.environ.get("MOCK_STALL") == "1"
+
+# 진행 중 미션에서 로봇 이벤트가 이만큼 없거나 로봇팔이 이만큼 끊겨 있으면 stalled 로 본다.
+# 사과 하나(집기→검사→놓기→복귀)가 실제 장비에서 20~25초라 60초면 여유가 있다.
+MISSION_STALE_S = float(os.environ.get("MISSION_STALE_S", "60"))
 
 # 카메라 프레임을 어디서 받을지. MOCK=1 이면 무시된다.
 #   piper  : PIPER Studio 게이트웨이의 MJPEG 스트림을 받아온다
