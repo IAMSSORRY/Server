@@ -27,7 +27,8 @@ services:
       PIPER_AUTO_CONNECT: ${PIPER_AUTO_CONNECT:-1}
       ARM_MONITOR: ${ARM_MONITOR:-}
       INGEST_TOKEN: ${INGEST_TOKEN:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # 프론트 주소 (www.apah.site 에서 api.apah.site 를 부른다). .env 에 CORS_ORIGINS 를 적으면 그 값이 우선
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://www.apah.site,https://apah.site}
     extra_hosts:
       # 리눅스에서도 host.docker.internal 로 호스트(PIPER Studio nginx :80)에 붙을 수 있게
       - "host.docker.internal:host-gateway"
