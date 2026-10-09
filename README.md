@@ -284,7 +284,7 @@ PIPER 에서 팔을 다시 연결하면 슬레이브 설정과 토크 OFF 가 �
 ```json
 // POST /ingest/judge — id 는 서버가 붙인다. ts 를 빼면 수신 시각, cycle_time 을 빼면 직전 판정과의 간격을 쓴다.
 // cam 은 bbox 기준 카메라. 빼면 기본 카메라. 형식이 틀리면 422.
-{"grade": "상", "confidence": 0.87, "v_value": 182, "threshold": 160, "bbox": [412, 188, 96, 96], "cam": "top", "ts": 1791527966.54}
+{"grade": "상", "confidence": 0.87, "v_value": 0.62, "threshold": 0.5, "bbox": [412, 188, 96, 96], "cam": "top", "ts": 1791527966.54}
 
 // POST /ingest/motion — id 를 넣으면 그 판정에, 빼면 모션이 아직 없는 가장 최근 판정에 roll_detected 가 기록된다.
 {"approach_speed": 0.8, "place_height": 0.12, "roll_detected": false, "ts": 1791527968.04}
@@ -312,11 +312,11 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 {"type": "snapshot",
  "stats": {"상": 3, "중": 2, "total": 5},
  "cycle_time": 4.2,
- "recent": [{"id": 5, "grade": "중", "confidence": 0.81, "v_value": 140, "threshold": 160,
+ "recent": [{"id": 5, "grade": "중", "confidence": 0.81, "v_value": 0.41, "threshold": 0.5,
              "ts": 1791527982.74, "roll_detected": null}]}
 
 // 판정마다. bbox 는 cam 카메라의 /ws/camera JPEG 기준 픽셀 [x, y, w, h]
-{"type": "judge", "id": 6, "grade": "상", "confidence": 0.87, "v_value": 182, "threshold": 160,
+{"type": "judge", "id": 6, "grade": "상", "confidence": 0.87, "v_value": 0.62, "threshold": 0.5,
  "bbox": [412, 188, 96, 96], "cam": "top", "ts": 1791527986.84}
 
 // 판정 직후 갱신된 누적 통계
@@ -331,11 +331,11 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 ```json
 // GET /stats?limit=50
 {"stats": {"상": 4, "중": 2, "total": 6}, "cycle_time": 4.1,
- "recent": [{"id": 6, "grade": "상", "confidence": 0.87, "v_value": 182, "threshold": 160,
+ "recent": [{"id": 6, "grade": "상", "confidence": 0.87, "v_value": 0.62, "threshold": 0.5,
              "ts": 1791527986.84, "roll_detected": false}]}
 
 // GET /history
-[{"id": 1, "grade": "상", "confidence": 0.93, "v_value": 229, "threshold": 160,
+[{"id": 1, "grade": "상", "confidence": 0.93, "v_value": 0.88, "threshold": 0.5,
   "ts": 1791527966.54, "roll_detected": true}]
 
 // POST /stats/reset
@@ -347,7 +347,7 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 
 // GET /export.csv?run=1  (첫 줄 앞에 UTF-8 BOM)
 run_id,id,time,grade,confidence,v_value,threshold,roll_detected,cam
-1,1,2026-10-09T19:10:24.408+09:00,상,0.88,192,160,true,top
+1,1,2026-10-09T19:10:24.408+09:00,상,0.88,0.77,0.5,true,top
 
 // GET /cameras
 // live: 최근 3초 안에 프레임이 왔는가. last_frame_age: 마지막 프레임 이후 초 (한 번도 안 왔으면 null)
@@ -355,6 +355,11 @@ run_id,id,time,grade,confidence,v_value,threshold,roll_detected,cam
 {"default": "top", "cameras": [{"name": "top", "live": true, "last_frame_age": 0.04},
                                {"name": "wrist", "live": false, "last_frame_age": null}]}
 ```
+
+**값의 범위** (실제 장비 = IAMSSORRY/Piper 기준, MOCK 도 같다)
+- `v_value`: 빨강 비율 0~1 (소수 셋째 자리), `threshold`: 그 임계값 (`red_ratio_min`, 현재 0.5)
+- `confidence`: 임계값에서 떨어진 정도 0.5~1.0
+- 로봇이 카메라 판정 없이 등급만 낸 경우(수동 입력 모드 등) `v_value`, `threshold` 는 null, `confidence` 는 0.0, `bbox` 는 `[0,0,0,0]` 이다.
 
 `roll_detected` 는 그 판정에 대한 모션 이벤트가 오기 전까지 `null` 이다.
 `cycle_time` 은 판정이 두 번 이상 들어오기 전까지 `null` 이다.

@@ -20,8 +20,9 @@ from app.stream import CameraHubs
 WIDTH, HEIGHT = 640, 480
 FPS = 10
 MOTION_DELAY = 1.5  # 판정 후 모션 이벤트까지
-THRESHOLD = 160
-DARK_MAX = 0.1      # 흠 비율 상한 (이보다 크면 중)
+# 실제 장비(IAMSSORRY/Piper config.yaml grade)와 같은 기준: v_value = 빨강 비율 0~1
+THRESHOLD = 0.5     # red_ratio_min
+DARK_MAX = 0.1      # dark_ratio_max (흠 비율 상한, 이보다 크면 중)
 APPLE_COUNT = 10    # 미션 한 번에 사과 수
 BACKGROUNDS = [(40, 44, 52), (30, 50, 40), (50, 36, 36)]
 
@@ -93,11 +94,13 @@ async def run(cameras: CameraHubs, judges: JudgeHub) -> None:
 
     def judge() -> None:
         x, y, r, _ = random.choice(state["positions"])
-        v_value = random.randint(110, 230)
+        v_value = round(random.uniform(0.2, 0.95), 3)
         dark = round(random.uniform(0.0, 0.15), 3)
+        # 로봇 쪽 dashboard.confidence_of 와 같은 식: 임계값에서 떨어진 정도 0.5~1.0
+        span = max(THRESHOLD, 1 - THRESHOLD)
         judges.add_judge({
             "grade": "상" if v_value >= THRESHOLD and dark <= DARK_MAX else "중",
-            "confidence": round(random.uniform(0.7, 0.99), 2),
+            "confidence": round(min(1.0, 0.5 + abs(v_value - THRESHOLD) / (2 * span)), 3),
             "v_value": v_value,
             "threshold": THRESHOLD,
             "bbox": [x - r, y - r, 2 * r, 2 * r],
