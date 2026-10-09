@@ -151,6 +151,12 @@ async def run(cameras: CameraHubs, judges: JudgeHub, stall: bool = False, resume
             # JPEG 인코딩은 CPU 작업이라 스레드로 넘긴다
             frame = await asyncio.to_thread(_jpeg, background, positions, name)
             cameras.get(name).publish(frame)
+            if name == cameras.default:
+                # 실시간 사과 박스: 그 프레임에 그린 원 위치 그대로 (/ingest/detections 와 같은 형식)
+                cameras.get(name).publish_detections({
+                    "type": "detections", "cam": name, "ts": time.time(),
+                    "boxes": [{"bbox": [x - r, y - r, 2 * r, 2 * r], "score": 0.9} for x, y, r, _ in positions],
+                })
 
         due = [item for item in schedule if item[0] <= now]
         for item in sorted(due, key=lambda it: it[0]):

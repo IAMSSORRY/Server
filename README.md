@@ -189,6 +189,7 @@ docker compose logs -f api
 | `POST /advice` | AI 조언: 지금 상태를 Claude(Haiku 4.5)에 보내 운영자가 할 일을 받는다. body `{"question": "..."}` 선택 |
 | `GET /health` | 서버 상태, 카메라 소스 |
 | `POST /ingest/judge` | (로봇 쪽) 판정 하나 |
+| `POST /ingest/detections` | (로봇 쪽) 실시간 사과 박스 — top 영상 위에 계속 그릴 박스. DB 에 남기지 않는다 |
 | `POST /ingest/motion` | (로봇 쪽) 모션 결과 하나 |
 | `WS /ingest/camera/{cam}` | (로봇 쪽) 바이너리 메시지 하나 = JPEG 한 장 |
 | `GET /docs` | Swagger UI |
@@ -219,6 +220,19 @@ docker compose logs -f api
    "reason": "PIPER 에서 'wrist'(/dev/video4) 가 연결돼 있지 않다 — 카메라 페이지에서 연결하세요", "last_frame_age": 5.1}
   {"type": "camera_status", "cam": "top", "live": true}
   ```
+
+- **실시간 사과 박스 (`detections`)**: 비전이 `POST /ingest/detections` 로 보낸 박스를 그 카메라에 붙은 클라이언트에게 보낸다.
+  판정(judge)의 bbox 는 판정 때 한 번이지만, 이건 프레임마다 와서 영상 위에 박스를 계속 그릴 수 있다.
+  프레임처럼 최신 것만 보내고(밀리면 건너뜀), 카메라가 다운이면 보내지 않으며, DB 에 남기지 않는다.
+
+  ```json
+  // 로봇 → POST /ingest/detections (INGEST_TOKEN). 초당 10번 이하. 사과가 없으면 boxes: [] (박스 지우기)
+  {"cam": "top", "ts": 1791584111.48, "boxes": [{"bbox": [61, 194, 128, 128], "grade": "상", "score": 0.9}]}
+  // /ws/camera?cam=top → 브라우저 (텍스트 메시지)
+  {"type": "detections", "cam": "top", "ts": 1791584111.48, "boxes": [{"bbox": [61, 194, 128, 128], "grade": "상", "score": 0.9}]}
+  ```
+
+  `bbox` 는 그 카메라 JPEG 원본 픽셀 `[x, y, w, h]` (판정 bbox 와 같은 기준). `grade`, `score` 는 선택. MOCK 은 그리는 원 3개를 프레임마다 보낸다.
 
   `reason` 은 원인을 아는 경우 그 이유, 모르면 "3초 넘게 프레임이 들어오지 않았다". `last_frame_age` 는 한 번도 안 왔으면 null.
 - 카메라 해상도는 소스가 정한다. PIPER Studio 를 쓰면 그쪽 카메라 설정의 **출력 해상도**가 그대로 나온다.

@@ -210,21 +210,33 @@ async def camera_ws(ws: WebSocket, cam: str | None = None):
     if not live:
         await _send_json(ws, status(False))
 
+    # 실시간 사과 박스: 붙는 순간 이미 있던 것은 보내지 않고 다음 것부터 (옛 박스가 잠깐 뜨지 않게)
+    det_seq = hub.det_seq
+
     async def next_item() -> list[str | bytes]:
-        """보낼 것들. 프레임이면 [JPEG], 상태가 바뀌었으면 [상태 JSON] 또는 [상태 JSON, JPEG]."""
-        nonlocal seq, live
+        """보낼 것들: [상태 JSON] / [JPEG] / [detections JSON] 조합. 프레임과 detections 는 최신 것만 (밀리면 건너뜀)."""
+        nonlocal seq, det_seq, live
         while True:
             try:
-                seq, frame = await asyncio.wait_for(hub.next_frame(seq), timeout=LIVE_WINDOW_S)
+                await asyncio.wait_for(hub.wait_change(seq, det_seq), timeout=LIVE_WINDOW_S)
             except asyncio.TimeoutError:
                 if live:
                     live = False
                     return [json.dumps(status(False), ensure_ascii=False)]
                 continue
-            if not live:
-                live = True
-                return [json.dumps(status(True), ensure_ascii=False), frame]
-            return [frame]
+            items: list[str | bytes] = []
+            if hub.seq != seq:
+                seq = hub.seq
+                if not live:
+                    live = True
+                    items.append(json.dumps(status(True), ensure_ascii=False))
+                items.append(hub.latest)
+            if hub.det_seq != det_seq:
+                det_seq = hub.det_seq
+                if live:   # 카메라가 다운이면 박스를 보내지 않는다 (배경 영상이 없다)
+                    items.append(json.dumps(hub.detections, ensure_ascii=False))
+            if items:
+                return items
 
     async def send(items: list[str | bytes]) -> None:
         for item in items:

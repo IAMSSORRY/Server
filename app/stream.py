@@ -20,14 +20,44 @@ class FrameHub:
         self._last_at: float | None = None
         # 소스가 알려준 마지막 실패 이유 (예: "PIPER 에서 연결 안 됨"). 프레임이 오면 지운다.
         self._error: str | None = None
+        # 실시간 사과 박스 (POST /ingest/detections, MOCK). 프레임처럼 최신 것 하나만 둔다. DB 에 남기지 않는다.
+        self._detections: dict | None = None
+        self._det_seq = 0
 
     def publish(self, frame: bytes) -> None:
         self._frame = frame
         self._seq += 1
         self._last_at = time.monotonic()
         self._error = None
+        self._wake()
+
+    def publish_detections(self, message: dict) -> None:
+        """{"type": "detections", "cam", "ts", "boxes"} — 프레임과 같은 이벤트로 기다리는 쪽을 깨운다."""
+        self._detections = message
+        self._det_seq += 1
+        self._wake()
+
+    def _wake(self) -> None:
         event, self._event = self._event, asyncio.Event()
         event.set()
+
+    @property
+    def latest(self) -> bytes | None:
+        """가장 최근 프레임 (JPEG)."""
+        return self._frame
+
+    @property
+    def det_seq(self) -> int:
+        return self._det_seq
+
+    @property
+    def detections(self) -> dict | None:
+        return self._detections
+
+    async def wait_change(self, seq: int, det_seq: int) -> None:
+        """새 프레임이나 새 detections 가 들어올 때까지 기다린다."""
+        while self._seq == seq and self._det_seq == det_seq:
+            await self._event.wait()
 
     def set_error(self, reason: str) -> None:
         """소스가 카메라를 못 받아올 때 이유를 남긴다. 클라이언트의 다운 메시지에 실린다."""

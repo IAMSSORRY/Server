@@ -40,8 +40,17 @@ async def check(cookie: str) -> None:
     async with websockets.connect(f"ws://{BASE}/ws/camera?cam=top", additional_headers=headers) as ws:
         hello = json.loads(await ws.recv())
         assert hello["type"] == "hello" and hello["cam"] == "top", hello
-        frame = await asyncio.wait_for(ws.recv(), 5)
-        assert isinstance(frame, bytes) and frame[:2] == b"\xff\xd8", "JPEG 프레임이 아니다"
+        got_frame = got_det = False
+        for _ in range(20):   # MOCK: 프레임과 detections 가 섞여 온다
+            msg = await asyncio.wait_for(ws.recv(), 5)
+            if isinstance(msg, bytes):
+                assert msg[:2] == b"\xff\xd8", "JPEG 프레임이 아니다"
+                got_frame = True
+            elif json.loads(msg).get("type") == "detections":
+                got_det = True
+            if got_frame and got_det:
+                break
+        assert got_frame and got_det, f"프레임 {got_frame}, detections {got_det}"
 
     async with websockets.connect(f"ws://{BASE}/ws/judge", additional_headers=headers) as ws:
         snapshot = json.loads(await ws.recv())
