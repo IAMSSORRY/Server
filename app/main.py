@@ -3,17 +3,19 @@ import csv
 import io
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from typing import Any, Awaitable, Callable, Coroutine, TypeVar
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import config, control, ingest
+from app.advice import AdviceUnavailable, Advisor
 from app.judge import HISTORY_MAX, SubscriberOverflow
 from app.sessions import COOKIE_NAME, Session
 from app.db import Store, _number
@@ -345,6 +347,28 @@ async def mission_state(events: int = Query(0, ge=0, le=500)):
 async def arm_status():
     """로봇팔 상태 (PIPER 에서 3초마다 읽는다). ok 가 false 면 message 에 이유. 감시하지 않으면 ok 는 null."""
     return arm.to_dict()
+
+
+advisor = Advisor()
+
+
+@app.post("/advice")
+async def advice(body: dict = Body(default={})):
+    """AI 조언: 지금 상태를 Claude 에 보내 운영자가 할 일을 짧게 받는다. body {"question": "..."} 는 선택."""
+    context = {
+        "stats": judges.stats(),
+        "cycle_time": judges.cycle_time,
+        "recent_judges": judges.history(20),
+        "mission": judges.mission.to_dict(),
+        "recent_events": await store.call(Store.events, judges.run_id, 20),
+        "arm": arm.to_dict(),
+        "cameras": [{"name": n, "live": cameras.get(n).live, "error": cameras.get(n).error} for n in cameras.names],
+        "now": time.time(),
+    }
+    try:
+        return await advisor.advise(context, body.get("question"))
+    except AdviceUnavailable as e:
+        raise HTTPException(503, str(e))
 
 
 @app.get("/health")

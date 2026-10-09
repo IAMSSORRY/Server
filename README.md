@@ -157,6 +157,9 @@ docker compose logs -f api
 | `ARM_MONITOR` | `CAMERA_SOURCE=piper` 면 `1` | PIPER 로봇팔 상태 감시(`GET /arm`). 읽기만 한다 |
 | `MISSION_STALE_S` | `60` | 진행 중 미션에서 로봇 이벤트가 이만큼 없거나 로봇팔이 이만큼 끊기면 `stalled` |
 | `MOCK_STALL` | `0` | `1` 이면 MOCK 미션을 중간에 멈춰 `stalled` 를 재현 |
+| `ANTHROPIC_API_KEY` | (비어 있음) | AI 조언(`POST /advice`)용 Anthropic API 키. 비우면 `/advice` 는 503 |
+| `ADVICE_MODEL` | `claude-haiku-4-5` | AI 조언 모델 |
+| `ADVICE_MIN_INTERVAL_S` | `10` | 질문 없는 조언 요청이 이 안에 또 오면 직전 조언을 돌려준다 (비용 보호) |
 | `CORS_ORIGINS` | `https://www.apah.site,https://apah.site` (compose) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
 | `FRONTEND_DIST` | `./frontend-dist` | (compose) 프론트 빌드 결과 폴더. 컨테이너의 `/workspace/frontend` 에 마운트된다 |
 
@@ -183,6 +186,7 @@ docker compose logs -f api
 | `POST /control/park` | 정리 후 정지: 그 자리 정지 → 쥔 사과를 집은 자리에 되돌림 → 팔을 낮게 → 모터 정지 (수 초, 타임아웃 20초) |
 | `POST /control/resume` | 비상정지·오류 정지 해제 → 멈춘 사과부터 이어서 |
 | `POST /control/stop` | 지금 사과까지만 하고 멈춤 |
+| `POST /advice` | AI 조언: 지금 상태를 Claude(Haiku 4.5)에 보내 운영자가 할 일을 받는다. body `{"question": "..."}` 선택 |
 | `GET /health` | 서버 상태, 카메라 소스 |
 | `POST /ingest/judge` | (로봇 쪽) 판정 하나 |
 | `POST /ingest/motion` | (로봇 쪽) 모션 결과 하나 |
@@ -312,6 +316,23 @@ reset 직후 모든 `/ws/judge` 에 연결 직후와 같은 순서로 snapshot �
 - 로봇 미션 프로그램이 안 떠 있으면 `503`, 토큰이 안 맞으면 `502`.
 - ⚠ 비상정지 해제 순간 모터 전원이 잠깐 빠져 팔이 처질 수 있다 — 해제 버튼에는 확인창을 띄운다.
 - 상태가 바뀔 때마다 로봇이 `POST /ingest/mission` 으로 `{"event": "control", "state", "error"}` 도 보낸다.
+
+### AI 조언 (`POST /advice`)
+
+서버가 지금 상태(이번 회차 통계, 최근 판정 20개, 미션 진행, 최근 미션 이벤트 20개, 로봇팔 / 카메라 상태)를 모아
+Claude(`ADVICE_MODEL`, 기본 Claude Haiku 4.5)에 보내고, 운영자가 지금 할 일을 한국어로 짧게 받는다.
+위험한 상황(비상정지, 멈춤, 끊김, 자동 조정 중단)을 먼저 말하고, 할 일은 최대 3가지를 근거 숫자와 함께 준다.
+
+```json
+// 요청 (body 생략 가능)
+{"question": "왜 굴림이 많아?"}
+// 응답
+{"advice": "…", "question": "왜 굴림이 많아?", "model": "claude-haiku-4-5", "generated_at": 1791580000.1, "cached": false}
+```
+
+- API 키는 Ubuntu `~/ssorry/.env` 에 `ANTHROPIC_API_KEY=sk-ant-...` 를 넣고 `docker compose up -d` (키가 없으면 503 과 안내 문구).
+- 공개 주소라서, 질문 없는 요청이 10초 안에 또 오면 API 를 다시 부르지 않고 직전 조언을 `cached: true` 로 돌려준다.
+- 실패하면 503 과 화면에 그대로 보여 줄 수 있는 이유(키 오류, 모델 없음, 요청 과다, 네트워크)를 준다.
 
 ### 로봇팔 상태
 

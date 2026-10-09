@@ -27,6 +27,9 @@ services:
       PIPER_AUTO_CONNECT: ${PIPER_AUTO_CONNECT:-1}
       ARM_MONITOR: ${ARM_MONITOR:-}
       INGEST_TOKEN: ${INGEST_TOKEN:-}
+      # AI 조언 (POST /advice). 키는 .env 에 ANTHROPIC_API_KEY=... 로
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ADVICE_MODEL: ${ADVICE_MODEL:-claude-haiku-4-5}
       # 프론트 주소 (www.apah.site 에서 api.apah.site 를 부른다). .env 에 CORS_ORIGINS 를 적으면 그 값이 우선
       CORS_ORIGINS: ${CORS_ORIGINS:-https://www.apah.site,https://apah.site}
     extra_hosts:

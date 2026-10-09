@@ -53,6 +53,12 @@ CSV_UTC_OFFSET_HOURS = float(os.environ.get("CSV_UTC_OFFSET_HOURS", "9"))
 # 로봇 미션 프로그램(Piper `mission.py --serve`)의 원격 제어 주소. /control/* 가 여기로 넘긴다.
 ROBOT_CONTROL_URL = os.environ.get("ROBOT_CONTROL_URL", "http://host.docker.internal:8765").rstrip("/")
 
+# AI 조언 (POST /advice). 키는 서버 .env 에만 둔다.
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ADVICE_MODEL = os.environ.get("ADVICE_MODEL", "claude-haiku-4-5")
+# 질문 없는 조언 요청이 이 간격 안에 또 오면 직전 조언을 돌려준다 (공개 주소라 비용 보호)
+ADVICE_MIN_INTERVAL_S = float(os.environ.get("ADVICE_MIN_INTERVAL_S", "10"))
+
 # /ingest/* 를 보호하는 토큰. 비어 있으면 검사하지 않는다(LAN 신뢰).
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
 
