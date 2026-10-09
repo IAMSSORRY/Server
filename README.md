@@ -154,6 +154,7 @@ docker compose logs -f api
 | `INGEST_TOKEN` | (비어 있음) | 설정하면 `/ingest/*` 에 `Authorization: Bearer <token>` 이 필요하다 |
 | `DB_PATH` | `/data/ssorry.db` | 판정 기록 SQLite 파일 (compose 는 `./data` 를 `/data` 에 마운트) |
 | `CSV_UTC_OFFSET_HOURS` | `9` | `/export.csv` 의 time 열 시간대 (한국 시간) |
+| `ARM_MONITOR` | `CAMERA_SOURCE=piper` 면 `1` | PIPER 로봇팔 상태 감시(`GET /arm`). 읽기만 한다 |
 | `CORS_ORIGINS` | (비어 있음) | 쉼표로 구분한 허용 출처. 비어 있으면 CORS 를 걸지 않는다 |
 | `FRONTEND_DIST` | `./frontend-dist` | (compose) 프론트 빌드 결과 폴더. 컨테이너의 `/workspace/frontend` 에 마운트된다 |
 
@@ -171,6 +172,7 @@ docker compose logs -f api
 | `POST /stats/reset` | 현재 회차를 닫고 새 회차 시작 (통계 0 부터). 이전 기록은 DB 에 남는다 |
 | `GET /runs` | 회차 목록과 회차별 통계 (최신순) |
 | `GET /export.csv?run=<id>` | 회차 이력 CSV (UTF-8 BOM). `run` 을 생략하면 전체 회차 |
+| `GET /arm` | 로봇팔 상태 (PIPER 에서 3초마다 읽기만 한다). `ok` 가 false 면 `message` 에 이유 |
 | `GET /health` | 서버 상태, 카메라 소스 |
 | `POST /ingest/judge` | (로봇 쪽) 판정 하나 |
 | `POST /ingest/motion` | (로봇 쪽) 모션 결과 하나 |
@@ -208,6 +210,25 @@ docker compose logs -f api
 - 카메라 해상도는 소스가 정한다. PIPER Studio 를 쓰면 그쪽 카메라 설정의 **출력 해상도**가 그대로 나온다.
   ELP 글로벌 셔터(AR0234) 카메라는 저해상도로 열면 센서 가운데만 잘라 화각이 좁아지므로,
   PIPER 에서 캡처 해상도를 넓게(예: 1280x960) 잡고 출력 해상도로 줄이는 것이 좋다.
+
+### 로봇팔 상태
+
+`GET /arm` — PIPER 의 `/api/robots/current` 를 3초마다 읽어 알린다. **팔은 건드리지 않는다.**
+PIPER 에서 팔을 다시 연결하면 슬레이브 설정과 토크 OFF 가 함께 일어나므로, 사람이 없는 사이 자동으로 하지 않는다.
+
+```json
+{"source": "piper", "ok": false,
+ "message": "로봇팔 can_arm1 가 연결돼 있지 않다 — PIPER 로봇 페이지에서 다시 연결하세요",
+ "arms": [{"iface": "can_arm1", "role": "follower", "connected": false, "responding": null,
+           "state": "UP", "ready": true, "transport": "can"}],
+ "checked_at": 1791542773.31}
+```
+
+- `ok`: 등록된 팔이 모두 연결 / 응답 / CAN UP 이면 true. 등록된 팔이 없거나 PIPER 를 못 읽으면 false.
+  감시하지 않으면(`source: "none"`) null. MOCK 에서는 항상 true.
+- **팔이 끊겼을 때 (사람이 PIPER 화면에서)**: USB-CAN 어댑터와 팔 전원을 확인 → 로봇 페이지에서 CAN 포트 스캔
+  → 인터페이스 이름이 `can0` 처럼 바뀌었으면 원래 이름(`can_arm1`)으로 변경 → UP → [연결].
+  연결하면 토크가 꺼지므로 팔을 받친 상태에서 한다. 복구되면 `/arm` 이 3초 안에 `ok: true` 가 된다.
 
 ### 판정 / 모션 이벤트
 

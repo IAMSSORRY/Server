@@ -33,6 +33,8 @@ PIPER_URL = os.environ.get("PIPER_URL", "http://localhost").rstrip("/")
 # /dev/videoN 은 재부팅하면 바뀔 수 있으므로 PIPER 화면에서 라벨을 붙여 라벨로 적는다.
 PIPER_CAMERAS = _map("PIPER_CAMERAS")
 PIPER_STREAM_FPS = float(os.environ.get("PIPER_STREAM_FPS", "15"))
+# PIPER 의 로봇팔 상태를 읽어 GET /arm 으로 알릴지. 기본은 카메라를 PIPER 에서 받을 때 켠다. 읽기만 한다.
+ARM_MONITOR = (os.environ.get("ARM_MONITOR") or ("1" if CAMERA_SOURCE == "piper" else "0")) == "1"
 # PIPER 에서 끊긴(꽂혀 있는) 카메라를 자동으로 다시 연결할지
 PIPER_AUTO_CONNECT = os.environ.get("PIPER_AUTO_CONNECT", "1") == "1"
 

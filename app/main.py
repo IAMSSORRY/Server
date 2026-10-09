@@ -17,7 +17,7 @@ from app import config, ingest
 from app.judge import HISTORY_MAX, SubscriberOverflow
 from app.sessions import COOKIE_NAME, Session
 from app.db import Store, _number
-from app.state import cameras, judges, sessions, store
+from app.state import arm, cameras, judges, sessions, store
 from app.stream import LIVE_WINDOW_S
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s: %(message)s")
@@ -32,12 +32,19 @@ def _start_sources() -> list[asyncio.Task]:
         from app.sources import mock  # Pillow 는 MOCK 일 때만 필요하다
 
         log.info("MOCK 모드: 카메라 %s, 판정 / 모션 이벤트를 만든다", cameras.names)
+        arm.update(True, None, [{"iface": "mock_arm", "role": "follower", "connected": True,
+                                 "responding": True, "state": "UP", "ready": True, "transport": "mock"}])
         return [asyncio.create_task(mock.run(cameras, judges))]
+
+    tasks = []
+    if config.ARM_MONITOR:
+        from app.sources import piper_arm
+
+        tasks.append(asyncio.create_task(piper_arm.watch(arm, config.PIPER_URL)))
 
     if config.CAMERA_SOURCE == "piper":
         from app.sources import piper
 
-        tasks = []
         for name in cameras.names:
             ref = config.PIPER_CAMERAS.get(name)
             if ref is None:
@@ -50,7 +57,7 @@ def _start_sources() -> list[asyncio.Task]:
         return tasks
 
     log.info("카메라는 WS /ingest/camera/{cam} 으로 들어오기를 기다린다 (CAMERAS=%s)", ",".join(cameras.names))
-    return []
+    return tasks
 
 
 @asynccontextmanager
@@ -306,6 +313,12 @@ async def list_cameras():
             for n in cameras.names
         ],
     }
+
+
+@app.get("/arm")
+async def arm_status():
+    """로봇팔 상태 (PIPER 에서 3초마다 읽는다). ok 가 false 면 message 에 이유. 감시하지 않으면 ok 는 null."""
+    return arm.to_dict()
 
 
 @app.get("/health")

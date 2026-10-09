@@ -22,6 +22,7 @@ services:
       PIPER_URL: ${PIPER_URL:-http://host.docker.internal}
       PIPER_CAMERAS: ${PIPER_CAMERAS:-}
       PIPER_AUTO_CONNECT: ${PIPER_AUTO_CONNECT:-1}
+      ARM_MONITOR: ${ARM_MONITOR:-}
       INGEST_TOKEN: ${INGEST_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     extra_hosts:
