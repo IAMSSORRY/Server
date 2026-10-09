@@ -65,12 +65,16 @@ def judge_arms(arms: list[dict]) -> tuple[bool, str | None]:
         return False, "PIPER 에 등록된 로봇팔이 없다"
     for arm in registered:
         name = arm.get("iface") or "?"
-        if arm.get("state") not in (None, "UP"):
-            return False, f"로봇팔 {name} 의 CAN 인터페이스가 꺼져 있다 ({arm.get('state')}) — USB-CAN 어댑터를 확인하세요"
+        # 연결돼 있고 응답하면 정상이다. PIPER 의 state 는 마지막 CAN 스캔 때 값이라, 팔이 정상으로 움직이는데도
+        # "DOWN" 으로 남아 있는 경우가 있었다 (10-10 실측: state DOWN, connected/responding true, 미션 로그는 UP).
+        # 그래서 state 는 응답이 없을 때 원인을 알려 주는 데만 쓴다.
+        if arm.get("connected") and arm.get("responding") is not False:
+            continue
         if not arm.get("connected"):
-            return False, f"로봇팔 {name} 가 연결돼 있지 않다 — PIPER 로봇 페이지에서 다시 연결하세요"
-        if arm.get("responding") is False:
-            return False, f"로봇팔 {name} 가 응답하지 않는다 — 전원과 CAN 케이블을 확인하세요"
+            return False, f"로봇팔 {name} 가 연결돼 있지 않습니다 — PIPER 로봇 페이지에서 다시 연결하세요"
+        if arm.get("state") not in (None, "UP"):
+            return False, f"로봇팔 {name} 가 응답하지 않습니다 — CAN 인터페이스가 꺼져 있습니다 ({arm.get('state')}). USB-CAN 어댑터를 확인하세요"
+        return False, f"로봇팔 {name} 가 응답하지 않습니다 — 전원과 CAN 케이블을 확인하세요"
     return True, None
 
 

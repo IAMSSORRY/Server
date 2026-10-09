@@ -361,7 +361,8 @@ PIPER 에서 팔을 다시 연결하면 슬레이브 설정과 토크 OFF 가 �
  "checked_at": 1791542773.31}
 ```
 
-- `ok`: 등록된 팔이 모두 연결 / 응답 / CAN UP 이면 true. 등록된 팔이 없거나 PIPER 를 못 읽으면 false.
+- `ok`: 등록된 팔이 모두 연결돼 있고 응답하면 true. PIPER 의 `state`(CAN UP/DOWN)는 마지막 스캔 때 값이라 팔이 정상인데도
+  DOWN 으로 남을 수 있어서, 응답이 없을 때 원인 설명에만 쓴다. 등록된 팔이 없거나 PIPER 를 못 읽으면 false.
   감시하지 않으면(`source: "none"`) null. MOCK 에서는 항상 true.
 - **팔이 끊겼을 때 (사람이 PIPER 화면에서)**: USB-CAN 어댑터와 팔 전원을 확인 → 로봇 페이지에서 CAN 포트 스캔
   → 인터페이스 이름이 `can0` 처럼 바뀌었으면 원래 이름(`can_arm1`)으로 변경 → UP → [연결].
