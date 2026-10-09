@@ -219,8 +219,11 @@ class JudgeHub:
         ending, self._run_id = self._run_id, self._run_id + 1
         self._store.submit(self._store.start_run, ending, self._run_id, time.time())
         self._reset_state()
+        self.mission.new_run()
         # 열려 있는 화면도 0 으로 맞추도록 snapshot 을 다시 보낸다.
+        # 연결 직후와 같은 순서(snapshot → mission)로 미션 상태도 한 번 보낸다.
         self._broadcast(self.snapshot())
+        self._broadcast(self.mission_message())
 
     def subscribe(self) -> tuple[Subscriber, dict, dict]:
         """구독을 등록하고 그 시점의 snapshot 과 미션 상태 메시지를 돌려준다.

@@ -42,6 +42,21 @@ class MissionState:
         self.duration_s: float | None = None
         self.updated_at: float | None = None
 
+    def new_run(self) -> None:
+        """통계 초기화(새 회차) 때 부른다.
+
+        회차별 집계(파지 성공 / 실패, 건너뜀)는 0 으로 되돌린다. 로봇 미션이 진행 중이면 로봇은 계속
+        움직이므로 진행 상태(status, apple_count, apple_index, phase, adaptive 등)는 그대로 두고,
+        진행 중이 아니면(idle / finished / estop) 전체를 idle 초기값으로 되돌린다.
+        """
+        if self.status != "running":
+            self.reset()
+            return
+        self.picks_ok = 0
+        self.picks_failed = 0
+        self.skipped = 0
+        self.updated_at = time.time()
+
     def to_dict(self) -> dict:
         return {
             "status": self.status,

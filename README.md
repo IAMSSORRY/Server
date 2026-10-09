@@ -242,6 +242,10 @@ docker compose logs -f api
            "updated_at": 1791543850.1}}
 ```
 
+`POST /stats/reset`(새 회차) 때 회차별 집계(`picks_ok`, `picks_failed`, `skipped`)는 0 이 된다. 미션이 진행 중(`running`)이면
+진행 상태(`apple_count`, `apple_index`, `phase`, `adaptive` 등)는 그대로 두고, 아니면 state 전체가 idle 초기값이 된다.
+reset 직후 모든 `/ws/judge` 에 연결 직후와 같은 순서로 snapshot → mission(event: null) 을 보낸다.
+
 `status`: `idle`(서버 시작 후 아직 없음) / `running` / `finished` / `estop`. 미션 상태는 메모리에만 있어 서버를 재시작하면
 `idle` 로 돌아온다(이벤트 기록은 DB 에 남는다).
 
@@ -308,7 +312,7 @@ pusher.push(cv2.imencode(".jpg", frame)[1].tobytes())   # 막히지 않고, 밀�
 이벤트를 버리는 대신 4408 로 끊는다. 재연결하면 `snapshot` 부터 다시 받는다.
 
 ```json
-// 연결 직후 한 번, 그리고 POST /stats/reset 직후 모든 클라이언트에 한 번
+// 연결 직후 한 번, 그리고 POST /stats/reset 직후 모든 클라이언트에 한 번 (둘 다 바로 뒤에 mission 메시지가 온다)
 {"type": "snapshot",
  "stats": {"상": 3, "중": 2, "total": 5},
  "cycle_time": 4.2,
