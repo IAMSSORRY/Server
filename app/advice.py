@@ -24,9 +24,9 @@ SYSTEM_PROMPT = """너는 사과 선별 로봇 대회 현장의 운영 보조다
 - stats: 이번 회차 등급별 누적 개수, cycle_time: 사과 하나에 걸린 초
 - recent_judges: 최근 판정. v_value = 빨강 비율(0~1), threshold = 상 기준, confidence = 기준에서 떨어진 정도(0.5~1, 확률 아님),
   extra 에 흠 / 멍 비율과 기준, roll_detected = 놓은 뒤 굴렀는지 (null = 아직 모름)
-- mission: status(idle / running / paused(운영자가 정지, 이어서 가능) / stalled / finished / estop), 진행(apple_index / apple_count), phase, 파지 성공·실패·건너뜀,
+- mission: status(idle / running / stalled / finished / estop), 진행(apple_index / apple_count), phase, 파지 성공·실패·건너뜀,
   adaptive(굴림이 나면 하강 속도 배율 scale 과 놓는 높이 release_h 를 낮춘다. frozen 이면 자동 조정이 멈춘 상태)
-- recent_events: 최근 미션 이벤트 (skip, drop, collision(부딪혀 원위치 후 재시도), pause, estop, stalled 등)
+- recent_events: 최근 미션 이벤트 (skip, drop, estop, stalled 등)
 - arm: 로봇팔 연결 상태, cameras: 카메라가 프레임을 받고 있는지
 
 답하는 방법:

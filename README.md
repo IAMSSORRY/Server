@@ -105,8 +105,8 @@ curl -s http://localhost/api/cameras/current | python3 -m json.tool
 | `POST /control/start` | 미션 시작 `{"apples": 5}` |
 | `POST /control/estop` | 즉시 그 자리 정지 → 모터 정지 |
 | `POST /control/park` | 사과를 되돌리고 팔을 낮춘 뒤 정지 |
-| `POST /control/resume` | 비상정지 / 정지 해제 → 멈춘 사과부터 이어서 |
-| `POST /control/stop` | 그 자리에 즉시 정지 (모터 켠 채, 비상정지 아님). 상태 `stopped`, `/control/resume` 으로 이어서 |
+| `POST /control/resume` | 비상정지 해제 → 멈춘 사과부터 이어서 |
+| `POST /control/stop` | 지금 사과까지만 하고 멈춤 |
 | `POST /control/clear` | 칸 비움 `{"grade": "상"}` (생략 = 전체). 사람이 칸을 비웠다고 알려 로봇이 다시 놓게 한다 |
 
 ### 로봇 → 서버 (`Authorization: Bearer <INGEST_TOKEN>`)

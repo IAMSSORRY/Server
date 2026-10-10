@@ -20,8 +20,6 @@ EVENTS = {
     "pick": ("ok", "attempt", "width_mm"),               # 파지 결과 (attempt 0 = 첫 시도)
     "skip": ("index", "reason"),                         # 그 사과 건너뜀 (도달 불가 등)
     "adaptive": ("scale", "release_h", "frozen", "down_streak"),  # 적응형 조정 상태
-    "pause": ("reason",),                                # 운영자 정지(/stop) — 그 자리에 멈춤, 비상정지 아님. /resume 으로 이어감
-    "collision": ("reason",),                            # 벽 등에 부딪혀 팔을 원위치 → 다시 시도 (미션은 계속)
     "estop": ("reason",),                                # 비상정지 / 고장
     "end": ("duration_s", "results"),                    # 미션 끝
     "stalled": ("idle_s", "reason"),                     # (서버가 만든다) 진행 중인데 로봇 소식이 끊김
@@ -33,7 +31,7 @@ class MissionState:
         self.reset()
 
     def reset(self) -> None:
-        self.status = "idle"            # idle / running / paused / stalled / finished / estop
+        self.status = "idle"            # idle / running / stalled / finished / estop
         self.sim: bool | None = None
         self.apple_count: int | None = None
         self.apple_index: int | None = None
@@ -57,7 +55,7 @@ class MissionState:
         움직이므로 진행 상태(status, apple_count, apple_index, phase, adaptive 등)는 그대로 두고,
         진행 중이 아니면(idle / finished / estop) 전체를 idle 초기값으로 되돌린다.
         """
-        if self.status not in ("running", "stalled", "paused"):
+        if self.status not in ("running", "stalled"):
             self.reset()
             return
         self.picks_ok = 0
@@ -94,8 +92,8 @@ class MissionState:
             k: v for k, v in data.items() if k not in ("event", "ts")
         }
 
-        # 멈춤(stalled) / 정지(paused) 뒤에 로봇 이벤트가 다시 오면 진행 중으로 되돌린다
-        if self.status in ("stalled", "paused") and name not in ("stalled", "pause", "start", "estop", "end"):
+        # 멈춤(stalled) 뒤에 로봇 이벤트가 다시 오면 진행 중으로 되돌린다
+        if self.status == "stalled" and name not in ("stalled", "start", "estop", "end"):
             self.status = "running"
         if name != "stalled":
             self.last_event_at = time.time()
@@ -122,11 +120,6 @@ class MissionState:
             self.skipped += 1
         elif name == "adaptive":
             self.adaptive = payload
-        elif name == "pause":
-            # 멈춤 감시(stall_reason)는 running 만 보므로 정지해 있는 동안 stalled 로 바뀌지 않는다.
-            # 이어서 시작하면 로봇이 보내는 apple / phase 등 이벤트로 running 으로 돌아간다
-            self.status = "paused"
-            self.phase = None
         elif name == "estop":
             self.status = "estop"
             self.estop_reason = str(payload.get("reason") or "비상정지")
