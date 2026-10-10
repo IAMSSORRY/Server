@@ -10,6 +10,7 @@
   POST /control/park              정리 후 정지: 그 자리 정지 → 쥔 사과를 집은 자리에 되돌림 → 팔을 낮게 → 모터 정지 (수 초)
   POST /control/resume            비상정지(또는 오류 정지) 해제 → 멈춘 사과부터 이어서
   POST /control/stop              지금 사과까지만 하고 멈춤
+  POST /control/clear {"grade"}   칸 비움: 사람이 칸을 비웠다고 알린다(grade 생략 = 전체). 로봇이 그 칸에 다시 놓는다
 
 state: idle / running / stopping(/park 정리 중) / estopped / error / done. 로봇 프로그램이 안 떠 있으면 503.
 요청마다 새 클라이언트를 쓰므로 /control/estop 은 다른 명령(예: 정리 중인 /park)이 처리 중이어도 바로 나간다.
@@ -76,3 +77,9 @@ async def resume():
 @router.post("/stop")
 async def stop():
     return await _call("POST", "/stop")
+
+
+@router.post("/clear")
+async def clear(body: dict = Body(default={})):
+    grade = body.get("grade")
+    return await _call("POST", "/clear", {"grade": grade} if grade else {})

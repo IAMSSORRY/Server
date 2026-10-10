@@ -107,6 +107,7 @@ curl -s http://localhost/api/cameras/current | python3 -m json.tool
 | `POST /control/park` | 사과를 되돌리고 팔을 낮춘 뒤 정지 |
 | `POST /control/resume` | 비상정지 해제 → 멈춘 사과부터 이어서 |
 | `POST /control/stop` | 지금 사과까지만 하고 멈춤 |
+| `POST /control/clear` | 칸 비움 `{"grade": "상"}` (생략 = 전체). 사람이 칸을 비웠다고 알려 로봇이 다시 놓게 한다 |
 
 ### 로봇 → 서버 (`Authorization: Bearer <INGEST_TOKEN>`)
 
